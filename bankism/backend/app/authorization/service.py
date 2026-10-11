@@ -12,12 +12,18 @@ from ..profiling.engine import BehavioralRiskEngine, get_behavioral_risk_engine
 from ..schemas.auth import AuthenticatedPrincipal
 from ..schemas.common import Verdict
 from ..schemas.firewall import ProposedOperation
-from ..schemas.profiling import RecommendedAction, RiskAssessment
+from ..schemas.profiling import (
+    BehavioralRiskLevel,
+    PolicyRecommendation,
+    RecommendedAction,
+    RiskAssessment,
+)
 from ..security.auth import authorize_account_ownership
 from .dual_approval import DualApprovalManager, get_dual_approval_manager
 from .tickets import (
     AuthorizationTicket,
     CanonicalTransaction,
+    compute_canonical_fingerprint,
     create_authorization_ticket,
 )
 
@@ -88,6 +94,16 @@ class AuthorizationService:
 
         # 4. Check sufficient balance in ledger
         if src_account.balance_cents < amount_cents:
+            self.risk_engine.record_transfer_attempt(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                outcome="REJECTED_VALIDATION",
+                currency=currency_upper,
+                reason="Insufficient funds",
+            )
             raise ValueError(
                 f"Insufficient funds: Available balance is {src_account.balance_cents} cents "
                 f"(${src_account.balance_dollars:.2f}), requested {amount_cents} cents."
@@ -106,10 +122,31 @@ class AuthorizationService:
         daily_spent = row["daily_sum"] if row else 0
 
         if daily_spent + amount_cents > src_account.daily_limit_cents:
+            self.risk_engine.record_transfer_attempt(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                outcome="REJECTED_VALIDATION",
+                currency=currency_upper,
+                reason="Daily transfer limit exceeded",
+            )
             raise ValueError(
                 f"Daily transfer limit exceeded: spent {daily_spent} cents, "
                 f"limit {src_account.daily_limit_cents} cents."
             )
+
+        canonical_tx = CanonicalTransaction(
+            transaction_nonce=f"nonce_{uuid.uuid4().hex[:12]}",
+            initiator_user_id=principal.user_id,
+            source_account_id=source_account_id,
+            destination_account_id=destination_account_id,
+            amount_cents=amount_cents,
+            currency=currency_upper,
+            memo=memo,
+        )
+        tx_fingerprint = compute_canonical_fingerprint(canonical_tx)
 
         # 6. Run AI Security Firewall on prompt if provided
         op = ProposedOperation(
@@ -136,52 +173,95 @@ class AuthorizationService:
         # INVARIANT: Low behavioral risk or clean history NEVER overrides a firewall BLOCK
         if verdict == Verdict.BLOCK:
             violation_details = "; ".join(v.description for v in violations) or "; ".join(reasons)
+            self.risk_engine.record_transfer_attempt(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                outcome="BLOCKED_FIREWALL",
+                currency=currency_upper,
+                reason=violation_details,
+            )
             raise ValueError(f"Transfer blocked by AI Security Firewall: {violation_details}")
 
-        # 7. Behavioral Risk Assessment (User Threat Profiling)
-        behavioral_assessment: RiskAssessment = self.risk_engine.assess_transaction_risk(
-            conn=conn,
-            user_id=principal.user_id,
-            source_account_id=source_account_id,
-            destination_account_id=destination_account_id,
-            amount_cents=amount_cents,
-            context=context,
-        )
+        # 7. Behavioral Risk Assessment (User Threat Profiling) with fail-safe exception handling
+        try:
+            behavioral_assessment: RiskAssessment = self.risk_engine.assess_transaction_risk(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                context=context,
+                transaction_fingerprint=tx_fingerprint,
+                currency=currency_upper,
+                persist=False,
+            )
+        except Exception as exc:
+            behavioral_assessment = self.risk_engine._build_fail_safe_assessment(
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                reason=f"Behavioral risk engine unavailable or failed: {exc}",
+            )
+            behavioral_assessment.transaction_fingerprint = tx_fingerprint
+
+        settings = get_settings()
 
         # Escalation logic:
         # Dual approval required if:
         # a) High-risk amount threshold reached
         # b) Firewall gave REVIEW verdict or step_up required
-        # c) Behavioral assessment recommends DUAL_APPROVAL or BLOCK
+        # c) Behavioral assessment recommends DUAL_APPROVAL, BLOCK, REQUIRE_DUAL_APPROVAL, or HOLD_FOR_TRUSTED_REVIEW
+        # d) Behavioral risk level is HIGH (when configured) or CRITICAL
         requires_dual = (
             self.dual_approvals.requires_dual_approval(amount_cents)
             or verdict == Verdict.REVIEW
             or step_up
-            or behavioral_assessment.recommended_action == RecommendedAction.DUAL_APPROVAL
-            or behavioral_assessment.recommended_action == RecommendedAction.BLOCK
+            or behavioral_assessment.recommended_action in (RecommendedAction.DUAL_APPROVAL, RecommendedAction.BLOCK)
+            or behavioral_assessment.policy_action in (
+                PolicyRecommendation.REQUIRE_DUAL_APPROVAL,
+                PolicyRecommendation.HOLD_FOR_TRUSTED_REVIEW,
+            )
+            or behavioral_assessment.risk_level == BehavioralRiskLevel.CRITICAL
+            or (
+                getattr(settings, "high_behavioral_risk_requires_dual_approval", True)
+                and behavioral_assessment.risk_level == BehavioralRiskLevel.HIGH
+            )
         )
 
-        # Step-up required if behavioral risk tier is HIGH_RISK or recommended STEP_UP_AUTH
+        # Step-up required if behavioral risk tier is ELEVATED/HIGH_RISK or recommended STEP_UP_AUTH
         requires_step_up = (
             step_up
-            or behavioral_assessment.recommended_action == RecommendedAction.STEP_UP_AUTH
-            or behavioral_assessment.recommended_action == RecommendedAction.SUPERVISORY_REVIEW
+            or behavioral_assessment.recommended_action in (
+                RecommendedAction.STEP_UP_AUTH,
+                RecommendedAction.SUPERVISORY_REVIEW,
+            )
+            or behavioral_assessment.policy_action == PolicyRecommendation.STEP_UP_REVIEW
+            or behavioral_assessment.risk_level in (
+                BehavioralRiskLevel.MEDIUM,
+                BehavioralRiskLevel.HIGH,
+                BehavioralRiskLevel.CRITICAL,
+            )
         )
-
-        canonical_tx = CanonicalTransaction(
-            transaction_nonce=f"nonce_{uuid.uuid4().hex[:12]}",
-            initiator_user_id=principal.user_id,
-            source_account_id=source_account_id,
-            destination_account_id=destination_account_id,
-            amount_cents=amount_cents,
-            currency=currency_upper,
-            memo=memo,
-        )
-
-        settings = get_settings()
 
         if requires_dual:
             approval_record = self.dual_approvals.create_approval_request(conn, canonical_tx)
+            behavioral_assessment.final_outcome = "PENDING_DUAL_APPROVAL"
+            self.risk_engine.persist_assessment(conn, behavioral_assessment, record_audit=True)
+            self.risk_engine.record_transfer_attempt(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=source_account_id,
+                destination_account_id=destination_account_id,
+                amount_cents=amount_cents,
+                outcome="DUAL_APPROVAL_REQUIRED",
+                currency=currency_upper,
+                reason=behavioral_assessment.recommended_action_reason,
+                assessment_id=behavioral_assessment.assessment_id,
+            )
             return {
                 "status": "PENDING_DUAL_APPROVAL",
                 "message": (
@@ -197,6 +277,19 @@ class AuthorizationService:
             tx=canonical_tx,
             secret_key=settings.hmac_secret,
             lifetime_seconds=settings.ticket_expiry_seconds,
+        )
+        behavioral_assessment.final_outcome = "AUTHORIZED"
+        self.risk_engine.persist_assessment(conn, behavioral_assessment, record_audit=True)
+        self.risk_engine.record_transfer_attempt(
+            conn=conn,
+            user_id=principal.user_id,
+            source_account_id=source_account_id,
+            destination_account_id=destination_account_id,
+            amount_cents=amount_cents,
+            outcome="PREPARED",
+            currency=currency_upper,
+            reason="Authorized under deterministic & behavioral policy",
+            assessment_id=behavioral_assessment.assessment_id,
         )
 
         return {

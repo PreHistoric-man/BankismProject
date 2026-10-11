@@ -263,9 +263,12 @@ from ..security.auth import (
     get_authenticated_principal,
 )
 from ..profiling.engine import get_behavioral_risk_engine
+from ..risk.evaluation import run_synthetic_calibration_suite
+from ..risk.profile_service import get_profile_service
 from ..schemas.profiling import (
     HistoricalStats,
     RiskAssessment,
+    RiskAssessmentListResponse,
     UserProfileResponse,
 )
 
@@ -489,17 +492,37 @@ async def verify_audit_chain() -> Dict[str, Any]:
     tags=["Behavioral Profiling"],
 )
 async def get_my_behavioral_profile(
+    account_id: Optional[str] = None,
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> UserProfileResponse:
     """Retrieve explainable, deterministic threat standing and history analysis."""
-    risk_engine = get_behavioral_risk_engine()
+    profile_service = get_profile_service()
     with get_db_connection() as conn:
-        profile = risk_engine.get_user_profile(
+        return profile_service.get_authenticated_profile(
             conn=conn,
-            user_id=principal.user_id,
-            username=principal.username,
+            principal=principal,
+            account_id=account_id,
         )
-        return profile
+
+
+@router.get(
+    "/banking/risk/profile",
+    response_model=UserProfileResponse,
+    summary="Get behavioral risk profile for authenticated principal (Phase 3.5)",
+    tags=["Behavioral Profiling"],
+)
+async def get_risk_profile(
+    account_id: Optional[str] = None,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> UserProfileResponse:
+    """Retrieve behavioral risk profile scoped strictly to the authenticated principal and owned account."""
+    profile_service = get_profile_service()
+    with get_db_connection() as conn:
+        return profile_service.get_authenticated_profile(
+            conn=conn,
+            principal=principal,
+            account_id=account_id,
+        )
 
 
 @router.get(
@@ -510,18 +533,85 @@ async def get_my_behavioral_profile(
 )
 async def get_my_historical_stats(
     account_id: Optional[str] = None,
+    days_window: int = 30,
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> HistoricalStats:
-    """Retrieve rolling statistics (mean, variance, counterparty list) for an account or user."""
-    if account_id:
-        authorize_account_ownership(principal, account_id)
-
-    risk_engine = get_behavioral_risk_engine()
+    """Retrieve rolling statistics (mean, median, variance, counterparty list) for an account or user."""
+    safe_window = max(1, min(days_window, 365))
+    profile_service = get_profile_service()
     with get_db_connection() as conn:
-        stats = risk_engine.get_historical_stats(
+        return profile_service.get_authenticated_stats(
             conn=conn,
-            user_id=principal.user_id,
+            principal=principal,
             account_id=account_id,
-            days_window=30,
+            days_window=safe_window,
         )
-        return stats
+
+
+@router.get(
+    "/banking/risk/assessments",
+    response_model=RiskAssessmentListResponse,
+    summary="List persisted behavioral risk assessments for authenticated principal",
+    tags=["Behavioral Profiling"],
+)
+async def list_risk_assessments(
+    account_id: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> RiskAssessmentListResponse:
+    """Retrieve bounded, paginated behavioral risk assessments for the authenticated user."""
+    if limit < 1 or limit > 100:
+        limit = max(1, min(limit, 100))
+    if offset < 0:
+        offset = 0
+
+    profile_service = get_profile_service()
+    with get_db_connection() as conn:
+        items, total = profile_service.list_authenticated_assessments(
+            conn=conn,
+            principal=principal,
+            account_id=account_id,
+            limit=limit,
+            offset=offset,
+        )
+        return RiskAssessmentListResponse(
+            user_id=principal.user_id,
+            total=total,
+            limit=limit,
+            offset=offset,
+            assessments=items,
+        )
+
+
+@router.get(
+    "/banking/risk/assessments/{assessment_id}",
+    response_model=RiskAssessment,
+    summary="Get a specific persisted behavioral risk assessment by ID",
+    tags=["Behavioral Profiling"],
+)
+async def get_risk_assessment_detail(
+    assessment_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> RiskAssessment:
+    """Retrieve a single behavioral risk assessment, enforcing strict principal ownership."""
+    profile_service = get_profile_service()
+    with get_db_connection() as conn:
+        return profile_service.get_authenticated_assessment_by_id(
+            conn=conn,
+            principal=principal,
+            assessment_id=assessment_id,
+        )
+
+
+@router.get(
+    "/banking/risk/evaluation",
+    summary="Run reproducible synthetic scenario calibration benchmark (Phase 3.8)",
+    tags=["Behavioral Profiling"],
+)
+async def get_synthetic_risk_evaluation(
+    seed: int = 42,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> Dict[str, Any]:
+    """Return reproducible synthetic evaluation results across 8 behavioral scenario families."""
+    return run_synthetic_calibration_suite(seed=seed)

@@ -140,6 +140,68 @@ def init_ledger_database(db_path: Optional[str] = None) -> None:
             # Mark migration 1 as applied
             conn.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (1);")
 
+            # 8. Phase 3: Persistent Behavioral Risk Assessments table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS risk_assessments (
+                    assessment_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    source_account_id TEXT NOT NULL,
+                    destination_account_id TEXT NOT NULL,
+                    amount_cents INTEGER NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    transaction_fingerprint TEXT,
+                    history_watermark TEXT NOT NULL,
+                    risk_score REAL NOT NULL CHECK (risk_score >= 0.0 AND risk_score <= 100.0),
+                    risk_level TEXT NOT NULL,
+                    threat_tier TEXT NOT NULL,
+                    profile_status TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.35,
+                    recommended_action TEXT NOT NULL,
+                    policy_action TEXT NOT NULL,
+                    recommended_action_reason TEXT NOT NULL,
+                    model_version TEXT NOT NULL,
+                    history_events_analyzed INTEGER NOT NULL DEFAULT 0,
+                    is_cold_start INTEGER NOT NULL DEFAULT 1,
+                    factors_json TEXT NOT NULL,
+                    explanations_json TEXT NOT NULL,
+                    feature_summary_json TEXT NOT NULL DEFAULT '{}',
+                    assessed_at TEXT NOT NULL,
+                    final_outcome TEXT NOT NULL DEFAULT 'ASSESSED',
+                    audit_event_hash TEXT
+                );
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_risk_assessments_user_time
+                ON risk_assessments (user_id, assessed_at DESC);
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_risk_assessments_fingerprint
+                ON risk_assessments (transaction_fingerprint);
+            """)
+
+            # 9. Phase 3: Validated Server-Side Transfer Attempts (tracks failed/blocked/rejected attempts)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS transfer_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    source_account_id TEXT NOT NULL,
+                    destination_account_id TEXT NOT NULL,
+                    amount_cents INTEGER NOT NULL,
+                    currency TEXT NOT NULL DEFAULT 'USD',
+                    outcome TEXT NOT NULL,
+                    reason TEXT,
+                    assessment_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_transfer_attempts_user_time
+                ON transfer_attempts (user_id, created_at DESC);
+            """)
+
+            # Mark migration 2 as applied
+            conn.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (2);")
+
             # Seed fictional sandbox users (INSERT OR IGNORE preserves state)
             seed_users = [
                 ("USR-4401-ALICE", "alice", "CUSTOMER"),

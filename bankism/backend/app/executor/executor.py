@@ -13,7 +13,9 @@ from ..ledger.operations import (
     execute_atomic_ledger_transfer,
     get_account_by_id_db,
 )
+from ..profiling.engine import get_behavioral_risk_engine
 from ..schemas.auth import AuthenticatedPrincipal
+from ..schemas.profiling import BehavioralRiskLevel
 from ..security.auth import authorize_account_ownership
 
 
@@ -119,6 +121,47 @@ class SimulatedTransactionExecutor:
                     f"requested {tx.amount_cents} cents."
                 )
 
+            # 5b. Phase 3 TOCTOU (Time-of-Check to Time-of-Use) Behavioral Risk Verification
+            risk_engine = get_behavioral_risk_engine()
+            prior_assessment = risk_engine.get_assessment_by_fingerprint(conn, ticket.fingerprint)
+            is_dual_approved_ticket = tx.transaction_nonce.startswith("nonce_apr_")
+            if prior_assessment is not None:
+                if prior_assessment.final_outcome == "PENDING_DUAL_APPROVAL" and not is_dual_approved_ticket:
+                    raise ValueError(
+                        "Execution rejected: Transaction requires secondary dual approval before execution."
+                    )
+                if getattr(get_settings(), "enable_toctou_watermark_check", True) and not is_dual_approved_ticket:
+                    current_stats = risk_engine.get_historical_stats(
+                        conn,
+                        user_id=principal.user_id,
+                        account_id=tx.source_account_id,
+                    )
+                    if (
+                        prior_assessment.history_watermark
+                        and current_stats.history_watermark != prior_assessment.history_watermark
+                    ):
+                        reassessed = risk_engine.assess_transaction_risk(
+                            conn=conn,
+                            user_id=principal.user_id,
+                            source_account_id=tx.source_account_id,
+                            destination_account_id=tx.destination_account_id,
+                            amount_cents=tx.amount_cents,
+                            transaction_fingerprint=ticket.fingerprint,
+                            currency=tx.currency,
+                            persist=False,
+                        )
+                        if reassessed.risk_level in (BehavioralRiskLevel.HIGH, BehavioralRiskLevel.CRITICAL):
+                            risk_engine.update_assessment_outcome(
+                                conn,
+                                assessment_id=prior_assessment.assessment_id,
+                                final_outcome="INVALIDATED_TOCTOU_DRIFT",
+                            )
+                            raise ValueError(
+                                "TOCTOU security violation: Account transaction history changed materially since "
+                                f"authorization (reassessed risk={reassessed.risk_level.value}, score={reassessed.risk_score}); "
+                                "stale single-authorization ticket invalidated."
+                            )
+
             # 6. Execute atomic debit/credit in ledger
             tx_record = execute_atomic_ledger_transfer(
                 conn=conn,
@@ -129,6 +172,24 @@ class SimulatedTransactionExecutor:
                 amount_cents=tx.amount_cents,
                 currency=tx.currency,
                 memo=tx.memo,
+            )
+
+            if prior_assessment is not None:
+                risk_engine.update_assessment_outcome(
+                    conn,
+                    assessment_id=prior_assessment.assessment_id,
+                    final_outcome="COMPLETED",
+                )
+            risk_engine.record_transfer_attempt(
+                conn=conn,
+                user_id=principal.user_id,
+                source_account_id=tx.source_account_id,
+                destination_account_id=tx.destination_account_id,
+                amount_cents=tx.amount_cents,
+                outcome="COMPLETED",
+                currency=tx.currency,
+                reason=f"Executed tx_id={tx_id}",
+                assessment_id=prior_assessment.assessment_id if prior_assessment else None,
             )
 
             # 7. Record to tamper-evident audit ledger
