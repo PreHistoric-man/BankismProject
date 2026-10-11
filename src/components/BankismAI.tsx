@@ -1,6 +1,6 @@
 /**
  * @file BankismAI.tsx
- * @description Bankism AI — Customer-Facing Conversational Banking Interface
+ * @description Delamain AI — Customer-Facing Conversational Banking Interface
  * Polished, approachable fintech product supporting natural language banking queries,
  * balance inquiries, transaction proposals, explicit customer review cards,
  * firewall inspection, and dual-approval notifications.
@@ -100,7 +100,7 @@ export default function BankismAI({
       id: 'welcome',
       sender: 'assistant',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      text: `Welcome to Bankism AI! I'm your secure banking assistant. How can I assist you today? You can check your available balances, view transaction history, or request a funds transfer with real-time firewall protection.`,
+      text: `Welcome to Delamain AI! I'm your secure banking assistant. How can I assist you today? You can check your available balances, view transaction history, or request a funds transfer with real-time firewall protection.`,
     },
   ]);
   const [inputText, setInputText] = useState<string>('');
@@ -393,11 +393,11 @@ export default function BankismAI({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xl shadow-sm">
-              B
+              D
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-lg tracking-tight text-slate-900">Bankism AI</span>
+                <span className="font-semibold text-lg tracking-tight text-slate-900">Delamain AI</span>
                 <span className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5">
                   Consumer Banking
                 </span>
@@ -439,7 +439,7 @@ export default function BankismAI({
             <button
               onClick={onNavigateToSentinel}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-300 transition-colors"
-              title="Open Bankism Sentinel Security Operations Dashboard"
+              title="Open Delamain Sentinel Security Operations Dashboard"
             >
               <ShieldAlert className="w-3.5 h-3.5 text-blue-600" />
               <span>Sentinel SOC</span>
@@ -557,7 +557,7 @@ export default function BankismAI({
                 AI
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-slate-900">Bankism Natural Language Assistant</h3>
+                <h3 className="text-sm font-semibold text-slate-900">Delamain Natural Language Assistant</h3>
                 <p className="text-[11px] text-slate-500">
                   Protected execution gateway · Strict separation of chat and ledger mutation
                 </p>
@@ -580,7 +580,7 @@ export default function BankismAI({
                 className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
               >
                 <div className="flex items-center gap-2 text-[11px] text-slate-400 mb-1 px-1">
-                  <span>{msg.sender === 'user' ? currentUser : 'Bankism AI'}</span>
+                  <span>{msg.sender === 'user' ? currentUser : 'Delamain AI'}</span>
                   <span>·</span>
                   <span>{msg.timestamp}</span>
                   {msg.engine && (
@@ -770,7 +770,7 @@ export default function BankismAI({
                               <span className="text-[10px] font-mono text-slate-500">₹0.00 Transferred</span>
                             </div>
                             <p className="text-[11px] text-rose-700">
-                              The Bankism Deterministic Firewall intercepted this request. Balances remain unchanged.
+                              The Delamain Deterministic Firewall intercepted this request. Balances remain unchanged.
                             </p>
                             <button
                               onClick={onNavigateToSentinel}
@@ -791,7 +791,7 @@ export default function BankismAI({
             {isSending && (
               <div className="flex items-center gap-2 text-xs text-slate-500 italic p-2">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                <span>Bankism AI is analyzing request...</span>
+                <span>Delamain AI is analyzing request...</span>
               </div>
             )}
 

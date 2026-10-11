@@ -1,6 +1,6 @@
 /**
  * @file HackathonDemoDashboard.tsx
- * @description Bankism Rapid Hackathon Demo Mode
+ * @description Delamain Rapid Hackathon Demo Mode
  * Integrates:
  * A. Compact security dashboard with live connection & simulated-environment badge
  * B. Security Playground with 6 prefilled scenarios, text editor, transfer fields, and evidence inspector
@@ -622,7 +622,7 @@ export default function HackathonDemoDashboard({
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-800 border border-slate-700 text-xs">
             <ShieldAlert className="w-4 h-4 text-cyan-400" />
-            <span className="font-semibold text-slate-200">Bankism Demo Environment:</span>
+            <span className="font-semibold text-slate-200">Delamain Demo Environment:</span>
             <span className="text-cyan-300 font-mono text-[11px]">Simulated Banking Rails (No Real Funds)</span>
           </div>
 
@@ -726,7 +726,7 @@ export default function HackathonDemoDashboard({
                 5-Minute Hackathon Demo Protocol
               </h3>
               <p className="text-xs text-slate-400">
-                Execute four verified test assertions against the Bankism security pipeline.
+                Execute four verified test assertions against the Delamain security pipeline.
               </p>
             </div>
           </div>

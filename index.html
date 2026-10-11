@@ -3,10 +3,55 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bankism - AI Banking Security Firewall</title>
-    <meta name="description" content="Defensive AI security firewall foundation intercepting untrusted natural-language banking requests before reaching privileged banking operations." />
-    <meta property="og:title" content="Bankism - AI Banking Security Firewall" />
-    <meta property="og:description" content="Defensive AI security firewall foundation intercepting untrusted natural-language banking requests before reaching privileged banking operations." />
+    <script>
+      // In AI Studio preview environment, HMR WebSocket is disabled.
+      // Intercept vite-hmr WebSocket to prevent connection failure in iframe.
+      if (typeof window !== 'undefined' && window.WebSocket) {
+        const NativeWebSocket = window.WebSocket;
+        class FakeHmrSocket extends EventTarget {
+          constructor() {
+            super();
+            this.readyState = 1; // WebSocket.OPEN
+            this.OPEN = 1;
+            this.CLOSED = 3;
+            this.CONNECTING = 0;
+            this.CLOSING = 2;
+          }
+          send() {}
+          close() {}
+        }
+        window.WebSocket = function (url, protocols) {
+          const isViteHmr =
+            protocols === 'vite-hmr' ||
+            (Array.isArray(protocols) && protocols.includes('vite-hmr')) ||
+            (typeof url === 'string' && url.includes('vite-hmr'));
+
+          if (isViteHmr) {
+            return new FakeHmrSocket();
+          }
+          return new NativeWebSocket(url, protocols);
+        };
+        window.WebSocket.prototype = NativeWebSocket.prototype;
+        window.WebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+        window.WebSocket.OPEN = NativeWebSocket.OPEN;
+        window.WebSocket.CLOSING = NativeWebSocket.CLOSING;
+        window.WebSocket.CLOSED = NativeWebSocket.CLOSED;
+      }
+
+      window.addEventListener('unhandledrejection', function (e) {
+        if (
+          e?.reason?.message?.includes('WebSocket') ||
+          e?.reason?.stack?.includes('createWebSocketModuleRunnerTransport') ||
+          e?.reason?.stack?.includes('@vite/client')
+        ) {
+          e.preventDefault();
+        }
+      });
+    </script>
+    <title>Delamain - AI Banking Security Firewall</title>
+    <meta name="description" content="Intelligence can propose. Trust must authorize. Defensive AI security firewall intercepting untrusted natural-language banking requests before reaching privileged banking operations." />
+    <meta property="og:title" content="Delamain - AI Banking Security Firewall" />
+    <meta property="og:description" content="Intelligence can propose. Trust must authorize. Defensive AI security firewall intercepting untrusted natural-language banking requests before reaching privileged banking operations." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
   </head>

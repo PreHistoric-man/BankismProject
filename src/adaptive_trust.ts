@@ -1,6 +1,6 @@
 /**
  * @file adaptive_trust.ts
- * @description Bankism Adaptive Trust Engine
+ * @description Delamain Adaptive Trust Engine
  *
  * Implements transaction-specific behavioral risk assessment:
  * 1. Personal transaction baselines (mean, median, robust deviation, velocity, recipient history)

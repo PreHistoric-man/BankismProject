@@ -1,6 +1,6 @@
 /**
  * @file MoneyTransferFlowVisualizer.tsx
- * @description Real-Time Visual Money-Transfer Flow Component for Bankism AI & Sentinel
+ * @description Real-Time Visual Money-Transfer Flow Component for Delamain AI & Sentinel
  *
  * Visualizes account-to-account money movement:
  * - Source and Recipient account cards with real before/after ledger balances
@@ -8,7 +8,7 @@
  * - Explicit 7-stage backend lifecycle stepper based on verified backend responses
  * - Stop states for BLOCKED, AWAITING APPROVAL, FAILED, and COMPLETED
  * - Adaptive Trust Engine score and explainable signals integration
- * - Adaptable light/dark themes for Bankism AI consumer interface and Sentinel SOC dashboard
+ * - Adaptable light/dark themes for Delamain AI consumer interface and Sentinel SOC dashboard
  */
 
 import React, { useEffect, useState } from 'react';

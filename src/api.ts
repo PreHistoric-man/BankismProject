@@ -1,6 +1,6 @@
 /**
  * @file api.ts
- * @description Typed API client for Bankism FastAPI backend with graceful fallback.
+ * @description Typed API client for Delamain FastAPI backend with graceful fallback.
  */
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL ?? '';

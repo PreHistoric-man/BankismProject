@@ -1,6 +1,6 @@
 /**
  * @file server.ts
- * @description Bankism Full-Stack Node.js/Express Server
+ * @description Delamain Full-Stack Node.js/Express Server
  * Implements the Defensive AI Security Firewall, Risk Engine, Authorization Gateway,
  * and Tamper-Evident SHA-256 Chained Audit Trail. Serves Vite SPA in development & production.
  * Denominated throughout in Indian Rupees (INR) with integer minor units (paise).
@@ -254,7 +254,7 @@ function appendAuditEvent(eventType: string, userId: string, payload: Record<str
 }
 
 // Seed initial audit chain event
-appendAuditEvent('SYSTEM_INITIALIZED', 'SYSTEM', { system: 'Bankism AI Security Firewall', version: '0.3.0', currency: 'INR' });
+appendAuditEvent('SYSTEM_INITIALIZED', 'SYSTEM', { system: 'Delamain AI Security Firewall', version: '0.3.0', currency: 'INR' });
 
 // ============================================================================
 // Firewall & Security Engines
@@ -837,7 +837,7 @@ app.post('/banking/transfers/confirm', (req: Request, res: Response) => {
       amount_paise: amountPaise,
       amount_cents: amountPaise,
       currency: 'INR',
-      memo: 'Transferred via Bankism Authorization Gateway',
+      memo: 'Transferred via Delamain Authorization Gateway',
       status: 'COMPLETED',
       created_at_utc: new Date().toISOString(),
       hours_ago: 0,
@@ -1276,7 +1276,7 @@ app.post('/banking/chat', (req: Request, res: Response) => {
     ) {
       return res.json({
         intent: 'EXPLAIN_POLICY',
-        reply: `Bankism protects your account with a deterministic AI security firewall and multi-layer policies:\n\n1. **POL-001 (Prompt Injection)**: Blocks attempts to override system commands, bypass controls, or disregard instructions.\n2. **POL-002 (Jailbreak Defense)**: Blocks persona hijacking (e.g., claiming to be an administrator or unrestricted persona).\n3. **POL-003 (Metadata Sanitization)**: Blocks hostile SQL injection syntax or scripts inside transfer memos.\n4. **POL-004 (Obfuscation Defense)**: Strips zero-width and invisible evasive characters.\n5. **POL-005 (High-Value Dual Approval)**: Transfers of ₹50,000.00 or more or with elevated behavioral risk require secondary sign-off from an authorized Risk Officer before funds can be debited.\n6. **Ownership & Balance Invariants**: You can only transfer funds from accounts you legitimately own, within verified balance and daily limits.`,
+        reply: `Delamain protects your account with a deterministic AI security firewall and multi-layer policies:\n\n1. **POL-001 (Prompt Injection)**: Blocks attempts to override system commands, bypass controls, or disregard instructions.\n2. **POL-002 (Jailbreak Defense)**: Blocks persona hijacking (e.g., claiming to be an administrator or unrestricted persona).\n3. **POL-003 (Metadata Sanitization)**: Blocks hostile SQL injection syntax or scripts inside transfer memos.\n4. **POL-004 (Obfuscation Defense)**: Strips zero-width and invisible evasive characters.\n5. **POL-005 (High-Value Dual Approval)**: Transfers of ₹50,000.00 or more or with elevated behavioral risk require secondary sign-off from an authorized Risk Officer before funds can be debited.\n6. **Ownership & Balance Invariants**: You can only transfer funds from accounts you legitimately own, within verified balance and daily limits.`,
         proposal: null,
         engine: 'deterministic-rules',
       });
@@ -1325,7 +1325,7 @@ app.post('/banking/chat', (req: Request, res: Response) => {
       }
 
       // Extract or synthesize memo
-      let memo = 'Transfer initiated via Bankism AI';
+      let memo = 'Transfer initiated via Delamain AI';
       if (lower.includes('for ')) {
         const forIndex = text.toLowerCase().indexOf('for ');
         memo = text.substring(forIndex + 4).trim();
@@ -1354,7 +1354,7 @@ app.post('/banking/chat', (req: Request, res: Response) => {
     // Default conversational response
     return res.json({
       intent: 'GENERAL_ASSISTANCE',
-      reply: `Hello ${principal.username}! I am Bankism AI, your intelligent banking assistant. How can I help you today? You can ask:\n• "What is my available balance?"\n• "Show my recent transactions."\n• "Transfer ₹5,000 to savings for routine allocation."\n• "Transfer ₹1,50,000 to ACC-3003-BUS for equipment lease."\n• "Why was my transaction blocked?"`,
+      reply: `Hello ${principal.username}! I am Delamain AI, your intelligent banking assistant. How can I help you today? You can ask:\n• "What is my available balance?"\n• "Show my recent transactions."\n• "Transfer ₹5,000 to savings for routine allocation."\n• "Transfer ₹1,50,000 to ACC-3003-BUS for equipment lease."\n• "Why was my transaction blocked?"`,
       proposal: null,
       engine: 'deterministic-rules',
     });
@@ -1374,18 +1374,21 @@ async function startServer() {
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Bankism] Full-Stack Server active on http://0.0.0.0:${PORT} (INR default)`);
+    console.log(`[Delamain] Full-Stack Server active on http://0.0.0.0:${PORT} (INR default)`);
   });
 }
 
 startServer().catch((err) => {
-  console.error('[Bankism] Failed to start server:', err);
+  console.error('[Delamain] Failed to start server:', err);
   process.exit(1);
 });

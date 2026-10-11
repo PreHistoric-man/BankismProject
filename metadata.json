@@ -1,6 +1,6 @@
 {
-  "name": "Bankism - AI Banking Security Firewall",
-  "description": "Defensive AI security firewall foundation intercepting untrusted natural-language banking requests before reaching privileged banking operations.",
+  "name": "Delamain - AI Banking Security Firewall",
+  "description": "Intelligence can propose. Trust must authorize. Defensive AI security firewall intercepting untrusted natural-language banking requests before reaching privileged banking operations.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

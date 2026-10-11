@@ -1,6 +1,6 @@
 /**
  * @file BankismSentinel.tsx
- * @description Bankism Sentinel — Security Operations Center (SOC) Dashboard
+ * @description Delamain Sentinel — Security Operations Center (SOC) Dashboard
  * Monitors real-time transaction decisions, threat telemetry, deterministic firewall policy violations,
  * behavioral risk scores, dual approval requests, and cryptographic SHA-256 audit chain verification.
  */
@@ -154,7 +154,7 @@ export default function BankismSentinel({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight text-white">Bankism Sentinel</span>
+                <span className="font-bold text-lg tracking-tight text-white">Delamain Sentinel</span>
                 <span className="font-mono text-[10px] text-cyan-400 bg-cyan-950/80 border border-cyan-800 rounded px-1.5 py-0.5">
                   SOC v0.3.0
                 </span>
@@ -190,13 +190,13 @@ export default function BankismSentinel({
               <span>{autoRefresh ? 'Live Feed' : 'Paused'}</span>
             </button>
 
-            {/* Switch to Bankism AI */}
+            {/* Switch to Delamain AI */}
             <button
               onClick={onNavigateToApp}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition-colors"
-              title="Open Bankism AI Customer Banking Interface"
+              title="Open Delamain AI Customer Banking Interface"
             >
-              <span>Bankism AI</span>
+              <span>Delamain AI</span>
               <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
             </button>
           </div>

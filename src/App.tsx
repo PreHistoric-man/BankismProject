@@ -877,7 +877,7 @@ export default function App() {
     };
   };
 
-  // 1. Bankism AI Consumer Experience (/app)
+  // 1. Delamain AI Consumer Experience (/app)
   if (currentRoute === '/app') {
     return (
       <BankismAI
@@ -889,7 +889,7 @@ export default function App() {
     );
   }
 
-  // 2. Bankism Sentinel Security Operations SOC Dashboard (/sentinel)
+  // 2. Delamain Sentinel Security Operations SOC Dashboard (/sentinel)
   if (currentRoute === '/sentinel') {
     return (
       <BankismSentinel
@@ -916,20 +916,20 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500 selection:text-slate-950">
       {/* Return to Products Banner */}
       <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs">
-        <span className="text-slate-400">Bankism Legacy Red-Team Benchmark & Verification Environment</span>
+        <span className="text-slate-400">Delamain Legacy Red-Team Benchmark & Verification Environment</span>
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigateTo('/app')}
             className="text-blue-400 hover:text-blue-300 font-medium"
           >
-            ← Open Bankism AI (/app)
+            ← Open Delamain AI (/app)
           </button>
           <span className="text-slate-600">·</span>
           <button
             onClick={() => navigateTo('/sentinel')}
             className="text-cyan-400 hover:text-cyan-300 font-medium"
           >
-            ← Open Bankism Sentinel (/sentinel)
+            ← Open Delamain Sentinel (/sentinel)
           </button>
           <span className="text-slate-600">·</span>
           <button
@@ -951,7 +951,7 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-lg tracking-tight bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">
-                  BANKISM
+                  DELAMAIN
                 </span>
                 <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800/60 text-cyan-300">
                   AI Firewall, Sandbox & Risk Intelligence v0.3.0 • Phase 3
@@ -2377,7 +2377,7 @@ export default function App() {
                 <span className="text-xs text-slate-400">bankism/backend/app/policies/rules.py</span>
               </div>
               <p className="text-xs text-slate-400">
-                Bankism implements a strict fail-closed governance chain. Rules are evaluated in descending severity order.
+                Delamain implements a strict fail-closed governance chain. Rules are evaluated in descending severity order.
                 Any single unhandled exception or malformed input immediately triggers a fail-closed BLOCK verdict.
               </p>
             </div>
@@ -2479,7 +2479,7 @@ export default function App() {
             <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5">
               <h2 className="text-base font-bold text-white flex items-center gap-2 mb-2">
                 <BookOpen className="w-5 h-5 text-cyan-400" />
-                Bankism Architecture & Security Specification
+                Delamain Architecture & Security Specification
               </h2>
               <p className="text-xs text-slate-400">
                 Phase 1 backend foundation engineered in Python 3.10+ / FastAPI with Pydantic v2 strict models,

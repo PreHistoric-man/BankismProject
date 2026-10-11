@@ -1,7 +1,7 @@
 /**
  * @file LandingPage.tsx
- * @description Shared Landing Portal for Bankism
- * Connects Bankism AI (Conversational Banking) and Bankism Sentinel (Security Operations Center).
+ * @description Shared Landing Portal for Delamain
+ * Connects Delamain AI (Conversational Banking) and Delamain Sentinel (Security Operations Center).
  */
 
 import React from 'react';
@@ -42,10 +42,10 @@ export default function LandingPage({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
-              B
+              D
             </div>
             <div>
-              <span className="font-bold text-lg tracking-tight text-white">Bankism</span>
+              <span className="font-bold text-lg tracking-tight text-white">Delamain</span>
               <span className="ml-2 font-mono text-xs text-blue-400 bg-blue-950/80 border border-blue-900 rounded px-1.5 py-0.5">
                 Dual Product Suite
               </span>
@@ -75,20 +75,20 @@ export default function LandingPage({
             <span>Defensive AI Security Firewall & Protected Transaction Gateway</span>
           </div>
           <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight mb-4">
-            One Core Engine. <br />
+            Intelligence can propose. <br />
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
-              Two Distinct Real Product Experiences.
+              Trust must authorize.
             </span>
           </h1>
           <p className="text-base text-slate-400 leading-relaxed">
-            Bankism intercepts untrusted natural-language prompts before they can reach privileged banking operations.
-            Experience the consumer conversational banking interface coordinated directly with the live Security Operations Center.
+            Delamain intercepts untrusted natural-language prompts before they can reach privileged banking operations.
+            An AI security layer that protects financial transactions from prompt injection, unauthorized actions, and suspicious transaction behavior.
           </p>
         </div>
 
         {/* Product Split Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto w-full mb-14">
-          {/* 1. Bankism AI Card */}
+          {/* 1. Delamain AI Card */}
           <div className="bg-gradient-to-b from-slate-900 to-slate-900/90 rounded-2xl border border-slate-800 p-8 shadow-xl flex flex-col justify-between hover:border-blue-500/50 transition-all group">
             <div>
               <div className="w-12 h-12 rounded-xl bg-blue-600/20 text-blue-400 flex items-center justify-center mb-6 border border-blue-500/30 group-hover:bg-blue-600 group-hover:text-white transition-all">
@@ -99,7 +99,7 @@ export default function LandingPage({
                 <span className="text-slate-600">·</span>
                 <span className="text-xs text-slate-400">Consumer Experience</span>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-3">Bankism AI</h2>
+              <h2 className="text-2xl font-bold text-white mb-3">Delamain AI</h2>
               <p className="text-sm text-slate-400 leading-relaxed mb-6">
                 Polished conversational banking interface where customers check balances, review transactions, and request transfers. Requests are interpreted into review proposals and verified through pre-execution firewall checks.
               </p>
@@ -124,12 +124,12 @@ export default function LandingPage({
               onClick={onSelectApp}
               className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-all"
             >
-              <span>Launch Bankism AI (/app)</span>
+              <span>Launch Delamain AI (/app)</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
 
-          {/* 2. Bankism Sentinel Card */}
+          {/* 2. Delamain Sentinel Card */}
           <div className="bg-gradient-to-b from-slate-900 to-slate-900/90 rounded-2xl border border-slate-800 p-8 shadow-xl flex flex-col justify-between hover:border-cyan-500/50 transition-all group">
             <div>
               <div className="w-12 h-12 rounded-xl bg-cyan-600/20 text-cyan-400 flex items-center justify-center mb-6 border border-cyan-500/30 group-hover:bg-cyan-600 group-hover:text-white transition-all">
@@ -140,7 +140,7 @@ export default function LandingPage({
                 <span className="text-slate-600">·</span>
                 <span className="text-xs text-slate-400">Security Operations (SOC)</span>
               </div>
-              <h2 className="text-2xl font-bold text-white mb-3">Bankism Sentinel</h2>
+              <h2 className="text-2xl font-bold text-white mb-3">Delamain Sentinel</h2>
               <p className="text-sm text-slate-400 leading-relaxed mb-6">
                 Real-time security operations console for analysts and risk officers. Inspect firewall decisions, observe prompt injection blocks, review high-risk transfers, and cryptographically verify the SHA-256 ledger chain.
               </p>
@@ -165,7 +165,7 @@ export default function LandingPage({
               onClick={onSelectSentinel}
               className="w-full py-3.5 px-4 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 border border-slate-700 hover:border-cyan-500/50 transition-all"
             >
-              <span>Launch Bankism Sentinel (/sentinel)</span>
+              <span>Launch Delamain Sentinel (/sentinel)</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
