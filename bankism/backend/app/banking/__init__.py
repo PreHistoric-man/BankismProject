@@ -1,0 +1,3 @@
+"""
+Banking subsystem package
+"""
