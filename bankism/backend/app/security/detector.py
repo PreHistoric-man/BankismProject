@@ -14,7 +14,7 @@ INJECTION_PATTERNS = re.compile(
 )
 
 JAILBREAK_PATTERNS = re.compile(
-    r"\b(dan|do\s+anything\s+now|bypass\s+all\s+safety|drain\s+account|chaos\s+mode|unfiltered\s+mode)\b",
+    r"\b(dan|do\s+anything\s+now|bypass\s+all\s+safety|drain\s+account|chaos\s+mode|unfiltered\s+mode|unrestricted\s+administrator|disable\s+security)\b",
     re.IGNORECASE,
 )
 

@@ -93,7 +93,7 @@ function sanitizeAndInspectFirewall(prompt: string, memo = ''): { verdict: Verdi
 
   const injectionPattern =
     /\b(ignore|disregard|forget|override|bypass)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands)|(system\s+override|admin\s+mode\s+enabled)\b/i;
-  const jailbreakPattern = /\b(dan|do\s+anything\s+now|bypass\s+all\s+safety|drain\s+account|chaos\s+mode)\b/i;
+  const jailbreakPattern = /\b(dan|do\s+anything\s+now|bypass\s+all\s+safety|drain\s+account|chaos\s+mode|unrestricted\s+administrator|disable\s+security)\b/i;
   const sqliPattern = /('|\b)(union\s+select|select\s+.*\s+from|drop\s+table|delete\s+from|or\s+1\s*=\s*1|--|#)/i;
 
   if (injectionPattern.test(sanitized)) {

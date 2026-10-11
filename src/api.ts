@@ -51,9 +51,15 @@ export interface ApiPrepareResponse {
 }
 
 export async function checkBackendHealth(): Promise<boolean> {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && (!API_BASE_URL || API_BASE_URL.startsWith('http://localhost'))) {
+    // Avoid blocked mixed-content calls in HTTPS cloud preview environments
+    return false;
+  }
   try {
     const res = await fetch(`${API_BASE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
-    return res.ok;
+    if (!res.ok) return false;
+    const data = await res.json().catch(() => null);
+    return data && (data.status === 'healthy' || data.status === 'ok');
   } catch {
     return false;
   }
@@ -155,3 +161,28 @@ export async function verifyAuditChainApi(): Promise<any> {
   }
   return res.json();
 }
+
+export async function fetchRiskProfileApi(username: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/banking/risk/profile`, {
+    method: 'GET',
+    headers: { 'X-Bankism-Mock-User': username },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to fetch risk profile' }));
+    throw new Error(err.detail || 'Failed to fetch risk profile');
+  }
+  return res.json();
+}
+
+export async function fetchRiskAssessmentsApi(username: string): Promise<any[]> {
+  const res = await fetch(`${API_BASE_URL}/banking/risk/assessments`, {
+    method: 'GET',
+    headers: { 'X-Bankism-Mock-User': username },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to fetch risk assessments' }));
+    throw new Error(err.detail || 'Failed to fetch risk assessments');
+  }
+  return res.json();
+}
+
