@@ -1,8 +1,8 @@
-# Bankism: Defensive AI Security Firewall for Banking Applications
+# Bankism: Defensive AI Security Firewall & Secure Simulated Transaction Sandbox
 
-Bankism is an application security firewall architecture engineered to intercept, inspect, and govern untrusted natural-language prompts in LLM-assisted banking workflows before they reach privileged financial operations.
+Bankism is an application security firewall architecture and secure transaction simulation sandbox engineered to intercept, inspect, and govern untrusted natural-language prompts in LLM-assisted banking workflows before they reach privileged financial operations.
 
-> **CRITICAL SECURITY NOTICE**: Bankism is a defensive security prototype using fictional accounts and simulated banking models. Real financial institutions, core banking integrations, payment gateways, and automated transaction executions are strictly excluded in Phase 1.
+> **CRITICAL SECURITY NOTICE**: Bankism is a defensive research prototype using fictional accounts and simulated banking models. Real financial institutions, core banking integrations, payment gateways, and automated transaction executions are strictly excluded.
 
 Please see [`bankism/README.md`](./bankism/README.md) for full backend documentation, testing, and architecture specifications.
 

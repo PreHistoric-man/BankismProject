@@ -97,6 +97,8 @@ class ThreatDetector:
         if self.enable_metadata_checks and operation:
             if operation.memo:
                 fields_to_check.append(operation.memo)
+            if operation.source_account_id:
+                fields_to_check.append(operation.source_account_id)
             if operation.destination_account_id:
                 fields_to_check.append(operation.destination_account_id)
             if operation.action:

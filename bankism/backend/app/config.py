@@ -25,8 +25,15 @@ class Settings(BaseSettings):
     enable_heuristic_detection: bool = True
     mask_log_sensitive_data: bool = True
 
-    # Security guardrails (Phase 1 prevents transaction execution)
+    # Security guardrails (Phase 1 legacy flag - kept for compatibility)
     allow_transaction_execution: bool = False
+
+    # Phase 2 Database & Ledger Configuration
+    database_path: str = "bankism_ledger.db"
+    hmac_secret: str = "bankism-dev-hmac-secret-key-32bytes-min-isolated"
+    ticket_expiry_seconds: int = 300
+    high_risk_dual_approval_threshold: float = 10000.00
+    dual_approval_expiry_seconds: int = 3600
 
     # Allowed CORS origins
     cors_origins: List[str] = ["*"]

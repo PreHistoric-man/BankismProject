@@ -12,6 +12,14 @@ if str(backend_dir) not in sys.path:
 
 from app.main import app
 from app.config import Settings, get_settings
+from app.ledger.db import init_ledger_database
+
+
+@pytest.fixture(autouse=True)
+def setup_test_ledger():
+    """Ensure test ledger is initialized before any test runs."""
+    settings = get_settings()
+    init_ledger_database(settings.database_path)
 
 
 @pytest.fixture

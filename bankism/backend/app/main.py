@@ -15,14 +15,25 @@ from .audit.logger import security_logger
 from .config import get_settings
 
 
+from .ledger.db import init_ledger_database
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for startup and shutdown procedures."""
     settings = get_settings()
     security_logger.info(
         f"Starting {settings.app_name} v{settings.app_version} "
-        f"[env={settings.environment}, execution_allowed={settings.allow_transaction_execution}]"
+        f"[env={settings.environment}, db={settings.database_path}]"
     )
+    # Initialize SQLite ledger database and migrations idempotently
+    try:
+        init_ledger_database(settings.database_path)
+        security_logger.info(f"SQLite ledger database initialized at '{settings.database_path}'")
+    except Exception as exc:
+        security_logger.error(f"Failed to initialize ledger database: {exc}")
+        raise
+
     yield
     security_logger.info(f"Shutting down {settings.app_name}")
 

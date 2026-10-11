@@ -7,21 +7,21 @@ from ..schemas.common import ThreatCategory, RiskLevel
 # Structure: (Pattern, ThreatCategory, Confidence, Severity, Description)
 PROMPT_INJECTION_PATTERNS: List[Tuple[re.Pattern, ThreatCategory, float, RiskLevel, str]] = [
     (
-        re.compile(r"(?i)\b(ignore|disregard|forget|override|bypass)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|prompts|rules|commands|constraints)\b"),
+        re.compile(r"(?i)\b(ignore|disregard|forget|override|bypass|discard|cancel|omit|reset|overrule)\s+(all\s+|any\s+|every\s+)?(previous|prior|above|system|existing)\s+(instructions|prompts|rules|commands|constraints|directives)\b"),
         ThreatCategory.PROMPT_INJECTION,
         0.95,
         RiskLevel.CRITICAL,
         "Instruction override attempting to disregard prior system constraints",
     ),
     (
-        re.compile(r"(?i)\b(new\s+system\s+prompt|system\s+override|admin\s+mode\s+enabled|root\s+access\s+granted)\b"),
+        re.compile(r"(?i)\b(new\s+system\s+prompt|system\s+override|admin\s+mode\s+enabled|root\s+access\s+granted|developer\s+mode\s+(enabled|active)|simulation\s+mode\s*:\s*active)\b"),
         ThreatCategory.PROMPT_INJECTION,
         0.92,
         RiskLevel.CRITICAL,
         "System prompt boundary spoofing attempt",
     ),
     (
-        re.compile(r"(?i)\b(you\s+are\s+now|from\s+now\s+on\s+you\s+must|starting\s+now\s+act\s+as)\s+(an?\s+)?(unrestricted|evil|dan|jailbroken|godmode|developer)\b"),
+        re.compile(r"(?i)\b(you\s+are\s+now|from\s+now\s+on\s+you\s+must|starting\s+now\s+act\s+as)\s+(an?\s+)?(unrestricted|evil|dan|jailbroken|godmode|developer|uncensored|rogue)\b"),
         ThreatCategory.PROMPT_INJECTION,
         0.90,
         RiskLevel.CRITICAL,
@@ -77,7 +77,7 @@ JAILBREAK_PATTERNS: List[Tuple[re.Pattern, ThreatCategory, float, RiskLevel, str
 MALICIOUS_PAYMENT_METADATA_PATTERNS: List[Tuple[re.Pattern, ThreatCategory, float, RiskLevel, str]] = [
     # SQL Injection in payment memo / destination
     (
-        re.compile(r"(?i)('|\b)(union\s+select|select\s+.*\s+from|insert\s+into|delete\s+from|drop\s+table|update\s+.*\s+set|or\s+1\s*=\s*1|--|#|/\*|\*/)\b"),
+        re.compile(r"(?i)('|\b)(union\s+select|select\s+.*\s+from|insert\s+into|delete\s+from|drop\s+table|update\s+.*\s+set|or\s+1\s*=\s*1|--|#|/\*|\*/|sleep\s*\(\d+\)|waitfor\s+delay)\b"),
         ThreatCategory.MALICIOUS_PAYMENT_METADATA,
         0.95,
         RiskLevel.CRITICAL,
@@ -93,7 +93,7 @@ MALICIOUS_PAYMENT_METADATA_PATTERNS: List[Tuple[re.Pattern, ThreatCategory, floa
     ),
     # Command Injection
     (
-        re.compile(r"(;|&&|\|\|)\s*(rm\s+-rf|cat\s+/etc/passwd|curl\s+|wget\s+|nc\s+|bash\s+-i|sh\s+-i|powershell)"),
+        re.compile(r"(?i)(;|&&|\|\||`|\$\()\s*(rm\s+-rf|cat\s+/etc/passwd|curl\s+|wget\s+|nc\s+|bash\s+-[ic]|sh\s+-[ic]|powershell|exec\s*\(|eval\s*\()"),
         ThreatCategory.MALICIOUS_PAYMENT_METADATA,
         0.98,
         RiskLevel.CRITICAL,

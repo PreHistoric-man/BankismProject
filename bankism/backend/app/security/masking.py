@@ -16,7 +16,7 @@ SSN_PATTERN = re.compile(
 
 # Bank Account Number: 8 to 17 digits preceded by keywords or common account formats
 ACCOUNT_NUM_KEYWORD_PATTERN = re.compile(
-    r"(?i)\b(account(?:\s+number|\s+no|\s*#)?\s*(?:is|:)?\s*)([0-9]{8,17})\b"
+    r"(?i)\b((?:account|acct)(?:\s+number|\s+no|\s*#)?\s*(?:is|:)?\s*)([0-9]{8,17})\b"
 )
 ACCOUNT_RAW_LONG_PATTERN = re.compile(
     r"\b(ACC-[A-Za-z0-9]+-)?([0-9]{8,12})\b"
@@ -24,7 +24,7 @@ ACCOUNT_RAW_LONG_PATTERN = re.compile(
 
 # Authentication secrets, API keys, passwords, bearer tokens, OTP codes
 AUTH_TOKEN_PATTERN = re.compile(
-    r"(?i)\b(bearer\s+[A-Za-z0-9\-._~+/]+=*|(?:api[_-]?key|secret|password|passwd|auth[_-]?token|pin|otp)\s*[:=]\s*['\"]?([A-Za-z0-9\-._~+/!@#$%^&*]{3,128})['\"]?)"
+    r"(?i)\b(bearer\s+[A-Za-z0-9\-._~+/]+=*|(?:api[_-]?key|secret|password|passwd|auth[_-]?token|pin|otp)\s*(?:[:=]|\bis\b)\s*['\"]?([A-Za-z0-9\-._~+/!@#$%^&*]{3,128})['\"]?)"
 )
 
 # CVV / CVC (3 or 4 digits near cvv/cvc keyword)
@@ -70,7 +70,7 @@ def _mask_token(match: re.Match) -> str:
     if matched.lower().startswith("bearer "):
         return "Bearer [REDACTED_TOKEN]"
     # Extract the key name before the separator
-    sep_match = re.search(r"[:=]", matched)
+    sep_match = re.search(r"[:=]|\bis\b", matched, flags=re.IGNORECASE)
     if sep_match:
         key_name = matched[:sep_match.end()]
         return f"{key_name} [REDACTED_SECRET]"
@@ -109,8 +109,11 @@ def mask_sensitive_data(text: str) -> str:
     return masked
 
 
-def mask_banking_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+def mask_banking_dict(data: Dict[str, Any], max_depth: int = 15) -> Dict[str, Any]:
     """Recursively scrub sensitive keys and values in dictionary payloads."""
+    if max_depth <= 0:
+        return {"[REDACTED_DEPTH_LIMIT]": True}
+
     sensitive_keys = {
         "password",
         "pin",
@@ -132,10 +135,10 @@ def mask_banking_dict(data: Dict[str, Any]) -> Dict[str, Any]:
         elif isinstance(value, str):
             cleaned[key] = mask_sensitive_data(value)
         elif isinstance(value, dict):
-            cleaned[key] = mask_banking_dict(value)
+            cleaned[key] = mask_banking_dict(value, max_depth - 1)
         elif isinstance(value, list):
             cleaned[key] = [
-                mask_banking_dict(item) if isinstance(item, dict)
+                mask_banking_dict(item, max_depth - 1) if isinstance(item, dict)
                 else (mask_sensitive_data(item) if isinstance(item, str) else item)
                 for item in value
             ]

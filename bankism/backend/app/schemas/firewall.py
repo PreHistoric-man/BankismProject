@@ -12,16 +12,19 @@ class ProposedOperation(BaseModel):
 
     action: str = Field(
         ...,
+        max_length=100,
         description="Banking action type, e.g. VIEW_BALANCE, TRANSFER_FUNDS, LIST_TRANSACTIONS, UPDATE_BENEFICIARY",
         examples=["TRANSFER_FUNDS"],
     )
     source_account_id: Optional[str] = Field(
         None,
+        max_length=100,
         description="Source bank account identifier",
         examples=["ACC-1001-CHK"],
     )
     destination_account_id: Optional[str] = Field(
         None,
+        max_length=100,
         description="Destination account or counterparty handle",
         examples=["ACC-8921-EXT"],
     )
@@ -33,6 +36,7 @@ class ProposedOperation(BaseModel):
     )
     currency: str = Field(
         default="USD",
+        max_length=10,
         description="ISO currency code",
         examples=["USD"],
     )
@@ -94,6 +98,7 @@ class FirewallInspectRequest(BaseModel):
     )
     channel: str = Field(
         default="web_chat",
+        max_length=50,
         description="Origin channel, e.g. web_chat, mobile_app, voice_assistant, api_agent",
     )
     proposed_operation: Optional[ProposedOperation] = Field(
@@ -161,7 +166,7 @@ class FirewallInspectResponse(BaseModel):
     )
     execution_permitted: bool = Field(
         default=False,
-        description="Safety guardrail: Always False in Phase 1; explicit permission gate for downstream executor",
+        description="Safety guardrail: Permanently False in Phase 1; explicit permission gate for downstream executor",
     )
     reasons: List[str] = Field(
         default_factory=list,

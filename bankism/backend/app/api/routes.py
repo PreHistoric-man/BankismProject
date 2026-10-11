@@ -3,7 +3,7 @@
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..audit.logger import security_logger
@@ -65,6 +65,9 @@ async def health_check(settings: Settings = Depends(get_settings)) -> HealthResp
             "masking_engine": "ready",
             "audit_recorder": "ready",
             "banking_guardrails": "enforced",
+            "ledger_database": "ready",
+            "audit_hash_chain": "ready",
+            "deterministic_authorization": "ready",
         },
     )
 
@@ -119,12 +122,9 @@ async def inspect_request(
         )
 
         # Step 5: Enforce Phase 1 execution safety guardrail
-        # Crucial security rule: LLM classifications or inspection verdicts NEVER authorize real transactions.
-        # Phase 1 explicitly sets execution_permitted = False
-        execution_permitted = False
-        if settings.allow_transaction_execution:
-            # Explicitly overridable only when simulated execution is unlocked in future phases
-            execution_permitted = (verdict == Verdict.APPROVE) and not requires_step_up
+        # CRITICAL INVARIANT: In Phase 1, execution_permitted is PERMANENTLY and UNCONDITIONALLY False.
+        # It is never controlled by user input, configuration overrides, classifier output, or request metadata.
+        execution_permitted: bool = False
 
         latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -225,7 +225,7 @@ async def get_audit_metrics(
 
 @router.get(
     "/banking/simulated-accounts",
-    summary="List simulated test accounts",
+    summary="List simulated test accounts (Deprecated public mock view)",
     tags=["Banking Simulator"],
 )
 async def list_simulated_accounts() -> Dict[str, Any]:
@@ -234,3 +234,294 @@ async def list_simulated_accounts() -> Dict[str, Any]:
         "status": "simulation_only",
         "accounts": [acc.model_dump() for acc in MOCK_ACCOUNTS.values()],
     }
+
+
+# ===========================================================================
+# Phase 2: Trusted Identity, Authorized Ledger & Transaction Sandboxing
+# ===========================================================================
+
+from ..audit.tamper_evident import get_tamper_evident_audit_store
+from ..authorization.dual_approval import get_dual_approval_manager
+from ..authorization.service import get_authorization_service
+from ..authorization.tickets import AuthorizationTicket
+from ..executor.executor import ExecutionReceipt, get_transaction_executor
+from ..ledger.db import get_db_connection
+from ..ledger.models import cents_to_dollars, dollars_to_cents
+from ..ledger.operations import (
+    get_account_by_id_db,
+    get_account_transactions,
+)
+from ..schemas.auth import AuthenticatedPrincipal
+from ..schemas.banking import (
+    AccountBalanceResponse,
+    ConfirmTransferRequest,
+    DualApproveRequest,
+    PrepareTransferRequest,
+)
+from ..security.auth import (
+    authorize_account_ownership,
+    get_authenticated_principal,
+)
+from ..profiling.engine import get_behavioral_risk_engine
+from ..schemas.profiling import (
+    HistoricalStats,
+    RiskAssessment,
+    UserProfileResponse,
+)
+
+
+@router.get(
+    "/banking/accounts",
+    summary="List accounts owned by authenticated principal",
+    tags=["Banking Ledger"],
+)
+async def get_my_accounts(
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> List[Dict[str, Any]]:
+    """Retrieve all accounts owned by the verified caller.
+
+    Cross-user accounts are strictly isolated.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.execute(
+            """SELECT account_id, user_id, account_name, account_type,
+                      balance_cents, currency, daily_limit_cents, is_active
+               FROM accounts WHERE user_id = ?;""",
+            (principal.user_id,),
+        )
+        accounts = []
+        for row in cursor.fetchall():
+            accounts.append({
+                "account_id": row["account_id"],
+                "user_id": row["user_id"],
+                "account_name": row["account_name"],
+                "account_type": row["account_type"],
+                "balance_cents": row["balance_cents"],
+                "balance_dollars": cents_to_dollars(row["balance_cents"]),
+                "currency": row["currency"],
+                "daily_limit_dollars": cents_to_dollars(row["daily_limit_cents"]),
+                "is_active": bool(row["is_active"]),
+            })
+        return accounts
+
+
+@router.get(
+    "/banking/accounts/{account_id}/balance",
+    response_model=AccountBalanceResponse,
+    summary="Get verified balance of an authorized account",
+    tags=["Banking Ledger"],
+)
+async def get_account_balance(
+    account_id: str,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> AccountBalanceResponse:
+    """Retrieve balance of account after verifying ownership."""
+    authorize_account_ownership(principal, account_id)
+
+    with get_db_connection() as conn:
+        acc = get_account_by_id_db(conn, account_id)
+        if not acc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Account '{account_id}' was not found in ledger.",
+            )
+        return AccountBalanceResponse(
+            account_id=acc.account_id,
+            user_id=acc.user_id,
+            account_name=acc.account_name,
+            account_type=acc.account_type,
+            balance_cents=acc.balance_cents,
+            balance_dollars=acc.balance_dollars,
+            currency=acc.currency,
+            daily_limit_dollars=acc.daily_limit_dollars,
+        )
+
+
+@router.get(
+    "/banking/accounts/{account_id}/transactions",
+    summary="Get verified transaction history of an authorized account",
+    tags=["Banking Ledger"],
+)
+async def get_account_history(
+    account_id: str,
+    limit: int = 50,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> List[Dict[str, Any]]:
+    """Retrieve transaction history after verifying ownership."""
+    authorize_account_ownership(principal, account_id)
+    safe_limit = max(1, min(limit, 100))
+
+    with get_db_connection() as conn:
+        records = get_account_transactions(conn, account_id, limit=safe_limit)
+        return [r.model_dump() for r in records]
+
+
+@router.post(
+    "/banking/transfers/prepare",
+    summary="Prepare and authorize a simulated transfer",
+    tags=["Banking Transfers"],
+)
+async def prepare_transfer(
+    req: PrepareTransferRequest,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+    settings: Settings = Depends(get_settings),
+) -> Dict[str, Any]:
+    """Validate transfer, evaluate firewall & policy rules, and issue signed authorization ticket.
+
+    If high-risk threshold is met, creates a pending dual-approval request.
+    """
+    try:
+        amount_cents = dollars_to_cents(req.amount)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid monetary amount: {exc}",
+        )
+
+    auth_service = get_authorization_service()
+
+    with get_db_connection() as conn:
+        try:
+            result = auth_service.prepare_transfer_authorization(
+                conn=conn,
+                principal=principal,
+                source_account_id=req.source_account_id,
+                destination_account_id=req.destination_account_id,
+                amount_cents=amount_cents,
+                currency=req.currency,
+                memo=req.memo,
+                prompt=req.prompt,
+                context=req.context,
+            )
+            return result
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "AUTHORIZATION_FAILED", "message": str(exc)},
+            )
+
+
+@router.post(
+    "/banking/transfers/confirm",
+    response_model=ExecutionReceipt,
+    summary="Execute an authorized transfer via the single protected execution gateway",
+    tags=["Banking Transfers"],
+)
+async def confirm_transfer(
+    req: ConfirmTransferRequest,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> ExecutionReceipt:
+    """Consume authorization ticket atomically and execute simulated ledger transfer."""
+    executor = get_transaction_executor()
+
+    with get_db_connection() as conn:
+        try:
+            receipt = executor.execute_transfer(
+                conn=conn,
+                principal=principal,
+                ticket=req.ticket,
+                idempotency_key=req.idempotency_key,
+            )
+            return receipt
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "EXECUTION_REJECTED", "message": str(exc)},
+            )
+
+
+@router.post(
+    "/banking/transfers/approve",
+    response_model=AuthorizationTicket,
+    summary="Submit secondary approval for a high-risk transfer",
+    tags=["Banking Transfers"],
+)
+async def approve_transfer(
+    req: DualApproveRequest,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+    settings: Settings = Depends(get_settings),
+) -> AuthorizationTicket:
+    """Secondary approver signs off on high-risk transaction."""
+    dual_approvals = get_dual_approval_manager()
+
+    with get_db_connection() as conn:
+        try:
+            ticket = dual_approvals.approve_transaction(
+                conn=conn,
+                request_id=req.request_id,
+                approver=principal,
+                secret_key=settings.hmac_secret,
+            )
+            return ticket
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "DUAL_APPROVAL_REJECTED", "message": str(exc)},
+            )
+
+
+@router.get(
+    "/banking/audit/verify",
+    summary="Verify cryptographic integrity of the persistent audit hash chain",
+    tags=["Audit"],
+)
+async def verify_audit_chain() -> Dict[str, Any]:
+    """Verify unbroken SHA-256 hash chain of the SQLite audit events."""
+    audit_store = get_tamper_evident_audit_store()
+    with get_db_connection() as conn:
+        is_valid, count, error = audit_store.verify_chain_integrity(conn)
+        return {
+            "is_valid": is_valid,
+            "verified_records_count": count,
+            "error": error,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+# ===========================================================================
+# Phase 3: User Threat Profiling & Behavioral Risk Intelligence Endpoints
+# ===========================================================================
+
+@router.get(
+    "/banking/profiling/me",
+    response_model=UserProfileResponse,
+    summary="Get behavioral threat profile and historical anomaly standing for authenticated user",
+    tags=["Behavioral Profiling"],
+)
+async def get_my_behavioral_profile(
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> UserProfileResponse:
+    """Retrieve explainable, deterministic threat standing and history analysis."""
+    risk_engine = get_behavioral_risk_engine()
+    with get_db_connection() as conn:
+        profile = risk_engine.get_user_profile(
+            conn=conn,
+            user_id=principal.user_id,
+            username=principal.username,
+        )
+        return profile
+
+
+@router.get(
+    "/banking/profiling/stats",
+    response_model=HistoricalStats,
+    summary="Get 30-day rolling historical transaction statistics for authenticated user",
+    tags=["Behavioral Profiling"],
+)
+async def get_my_historical_stats(
+    account_id: Optional[str] = None,
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> HistoricalStats:
+    """Retrieve rolling statistics (mean, variance, counterparty list) for an account or user."""
+    if account_id:
+        authorize_account_ownership(principal, account_id)
+
+    risk_engine = get_behavioral_risk_engine()
+    with get_db_connection() as conn:
+        stats = risk_engine.get_historical_stats(
+            conn=conn,
+            user_id=principal.user_id,
+            account_id=account_id,
+            days_window=30,
+        )
+        return stats

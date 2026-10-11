@@ -59,6 +59,23 @@ class PolicyEngine:
         reasons: List[str] = []
         requires_step_up = False
 
+        # FAIL-CLOSED INVARIANT: Missing, unconfigured, or empty policy rules must fail closed.
+        if not self.rules:
+            return (
+                Verdict.BLOCK,
+                RiskLevel.CRITICAL,
+                [
+                    PolicyViolation(
+                        rule_id="FAIL-CLOSED-RULES-MISSING",
+                        rule_name="Missing Policy Rules Enforcement",
+                        description="Security policy rule set is missing or empty. Operation blocked fail-closed.",
+                        required_action="Quarantine request and alert administration.",
+                    )
+                ],
+                ["Fail-closed security trigger: No policy rules configured or loaded."],
+                False,
+            )
+
         highest_verdict = Verdict.APPROVE
         highest_risk_level = self._risk_level_from_score(risk_score)
 
