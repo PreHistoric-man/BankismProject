@@ -66,6 +66,23 @@ export interface ApiPrepareResponse {
   ticket: any | null;
   dual_approval_request: any | null;
   risk_assessment: any;
+  ledger_movement?: {
+    source_account: {
+      account_id: string;
+      name: string;
+      balance_rupees: number;
+      balance_paise: number;
+    };
+    destination_account: {
+      account_id: string;
+      name: string;
+      exists_in_ledger: boolean;
+      balance_rupees: number | null;
+      balance_paise: number | null;
+    };
+    amount_rupees: number;
+    amount_paise: number;
+  };
   reasons: string[];
 }
 
@@ -279,4 +296,52 @@ export async function sendChatMessageApi(username: string, message: string, acco
   }
   return res.json();
 }
+
+export async function fetchTransferRequestStatusApi(username: string, requestId: string): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/banking/transfers/requests/${encodeURIComponent(requestId)}`, {
+    method: 'GET',
+    headers: { 'X-Bankism-Mock-User': username },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to fetch transfer request' }));
+    throw new Error(err.detail || 'Failed to fetch transfer request');
+  }
+  return res.json();
+}
+
+export interface AccountLookupResponse {
+  account_id: string;
+  name: string;
+  owner: string;
+  exists_in_ledger: boolean;
+  currency: string;
+  balance_rupees?: number;
+}
+
+export async function lookupAccountApi(accountId: string): Promise<AccountLookupResponse> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/banking/accounts/lookup/${encodeURIComponent(accountId)}`, {
+      method: 'GET',
+    });
+    if (!res.ok) {
+      return {
+        account_id: accountId,
+        name: accountId.startsWith('ACC-') ? 'External Counterparty' : accountId,
+        owner: 'External',
+        exists_in_ledger: false,
+        currency: 'INR',
+      };
+    }
+    return res.json();
+  } catch {
+    return {
+      account_id: accountId,
+      name: accountId.startsWith('ACC-') ? 'External Counterparty' : accountId,
+      owner: 'External',
+      exists_in_ledger: false,
+      currency: 'INR',
+    };
+  }
+}
+
 

@@ -41,6 +41,7 @@ import {
   SentinelAuditSummary,
   formatINR,
 } from '../api';
+import MoneyTransferFlowVisualizer from './MoneyTransferFlowVisualizer';
 
 interface BankismSentinelProps {
   onNavigateToApp: () => void;
@@ -348,45 +349,38 @@ export default function BankismSentinel({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               {pendingApprovals.map((req) => (
                 <div
                   key={req.request_id}
-                  className="bg-slate-950/90 border border-amber-500/30 rounded-xl p-4 flex flex-col justify-between gap-3"
+                  className="bg-slate-950/90 border border-amber-500/30 rounded-xl p-4 flex flex-col justify-between gap-3 shadow-md"
                 >
-                  <div>
-                    <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span className="font-mono font-bold text-amber-300">{req.request_id}</span>
-                      <span className="font-mono text-slate-400 text-[11px]">{req.created_at_utc?.slice(11, 19)}</span>
-                    </div>
-                    <div className="text-xs space-y-1 text-slate-300">
-                      <div>
-                        <span className="text-slate-500">Initiator:</span>{' '}
-                        <span className="font-mono text-slate-200">{req.initiator_user_id}</span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Routing:</span>{' '}
-                        <span className="font-mono text-slate-200">
-                          {req.source_account_id} → {req.destination_account_id}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Amount:</span>{' '}
-                        <span className="font-mono font-bold text-amber-400">
-                          {formatINR(req.amount_rupees ?? (req.amount_paise ? req.amount_paise / 100 : req.amount_cents / 100))}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-amber-300/90 bg-amber-950/40 p-1.5 rounded border border-amber-900/50">
-                        {req.reason}
-                      </div>
-                    </div>
-                  </div>
+                  <MoneyTransferFlowVisualizer
+                    stage="PENDING_APPROVAL"
+                    amount={req.amount_rupees ?? (req.amount_paise ? req.amount_paise / 100 : (req.amount_cents ? req.amount_cents / 100 : 0))}
+                    currency={req.currency || 'INR'}
+                    sourceAccount={{
+                      accountId: req.source_account_id,
+                      name: req.source_account_name || 'Source Checking Account',
+                      balanceBefore: req.ledger_movement?.source_account?.balance_rupees,
+                    }}
+                    destinationAccount={{
+                      accountId: req.destination_account_id,
+                      name: req.destination_account_name || 'Recipient Counterparty',
+                      balanceBefore: req.ledger_movement?.destination_account?.balance_rupees,
+                      existsInLedger: req.ledger_movement?.destination_account?.exists_in_ledger,
+                    }}
+                    transactionId={req.request_id}
+                    riskAssessment={req.risk_assessment}
+                    reasons={req.reasons || (req.reason ? [req.reason] : undefined)}
+                    theme="dark"
+                  />
 
                   <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
                     <button
                       onClick={() => handleProcessApproval(req.request_id, true)}
                       disabled={approvalProcessingId === req.request_id}
-                      className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-medium text-xs flex items-center justify-center gap-1 transition-colors disabled:opacity-50"
+                      className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 shadow-xs"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Approve & Issue Ticket</span>
@@ -394,7 +388,7 @@ export default function BankismSentinel({
                     <button
                       onClick={() => handleProcessApproval(req.request_id, false)}
                       disabled={approvalProcessingId === req.request_id}
-                      className="py-1.5 px-3 bg-rose-900/60 hover:bg-rose-800 text-rose-200 rounded font-medium text-xs flex items-center justify-center gap-1 transition-colors disabled:opacity-50 border border-rose-700/50"
+                      className="py-2 px-4 bg-rose-900/60 hover:bg-rose-800 text-rose-200 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 border border-rose-700/50 shadow-xs"
                     >
                       <X className="w-3.5 h-3.5" />
                       <span>Reject</span>
@@ -585,6 +579,60 @@ export default function BankismSentinel({
               </div>
 
               <div className="p-5 overflow-y-auto space-y-4 text-xs font-mono">
+                {/* Visual Money Movement Lifecycle Flow (if event represents a transfer lifecycle stage) */}
+                {(selectedEvent.event_type === 'TRANSFER_EXECUTED' ||
+                  selectedEvent.event_type === 'DUAL_APPROVAL_REQUESTED' ||
+                  selectedEvent.event_type === 'TRANSFER_BLOCKED_FIREWALL') && (
+                  <MoneyTransferFlowVisualizer
+                    stage={
+                      selectedEvent.event_type === 'TRANSFER_EXECUTED'
+                        ? 'COMPLETED'
+                        : selectedEvent.event_type === 'TRANSFER_BLOCKED_FIREWALL'
+                        ? 'BLOCKED'
+                        : 'PENDING_APPROVAL'
+                    }
+                    amount={
+                      selectedEvent.payload?.amount_rupees ??
+                      (selectedEvent.payload?.amount_paise
+                        ? selectedEvent.payload.amount_paise / 100
+                        : (selectedEvent.payload?.amount_cents
+                        ? selectedEvent.payload.amount_cents / 100
+                        : 0))
+                    }
+                    currency={selectedEvent.payload?.currency || 'INR'}
+                    sourceAccount={{
+                      accountId: selectedEvent.payload?.source_account_id || 'ACC-1001-CHK',
+                      name: selectedEvent.payload?.source_account_name || 'Source Checking Account',
+                      balanceBefore:
+                        selectedEvent.payload?.source_balance_before_rupees ??
+                        selectedEvent.payload?.ledger_movement?.source_account?.balance_rupees,
+                      balanceAfter: selectedEvent.payload?.source_balance_after_rupees,
+                    }}
+                    destinationAccount={{
+                      accountId: selectedEvent.payload?.destination_account_id || 'ACC-2002-SAV',
+                      name:
+                        selectedEvent.payload?.destination_account_name ||
+                        selectedEvent.payload?.ledger_movement?.destination_account?.name ||
+                        'Recipient Counterparty',
+                      balanceBefore:
+                        selectedEvent.payload?.destination_balance_before_rupees ??
+                        selectedEvent.payload?.ledger_movement?.destination_account?.balance_rupees,
+                      balanceAfter: selectedEvent.payload?.destination_balance_after_rupees,
+                      existsInLedger:
+                        selectedEvent.payload?.destination_exists_in_ledger ??
+                        selectedEvent.payload?.ledger_movement?.destination_account?.exists_in_ledger,
+                    }}
+                    transactionId={selectedEvent.payload?.tx_id || selectedEvent.payload?.request_id}
+                    auditHash={selectedEvent.event_hash}
+                    riskAssessment={selectedEvent.payload?.risk_assessment}
+                    reasons={
+                      selectedEvent.payload?.reasons ||
+                      (selectedEvent.payload?.threat ? [selectedEvent.payload.threat] : undefined)
+                    }
+                    theme="dark"
+                  />
+                )}
+
                 {/* Cryptographic Link Headers */}
                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
                   <div className="text-slate-400 flex justify-between">
@@ -623,6 +671,73 @@ export default function BankismSentinel({
                           : selectedEvent.payload.reasons}
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Adaptive Trust Engine Telemetry & Signals (if present) */}
+                {selectedEvent.payload?.risk_assessment && (
+                  <div className="bg-slate-950 p-3.5 rounded-xl border border-cyan-950/80 space-y-2.5 text-slate-200">
+                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                      <span className="font-bold text-cyan-300 flex items-center gap-1.5 font-sans">
+                        <Activity className="w-3.5 h-3.5" />
+                        Adaptive Trust Engine Behavioral Telemetry
+                      </span>
+                      <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/60">
+                        Score: {selectedEvent.payload.risk_assessment.risk_score} (
+                        {selectedEvent.payload.risk_assessment.risk_level})
+                      </span>
+                    </div>
+
+                    {selectedEvent.payload.risk_assessment.baseline && (
+                      <div className="grid grid-cols-3 gap-2 text-[10px] bg-slate-900/80 p-2 rounded border border-slate-800">
+                        <div>
+                          <span className="text-slate-500 block">Baseline:</span>
+                          <span className="font-semibold text-slate-300">
+                            {selectedEvent.payload.risk_assessment.baseline.baseline_maturity}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block">Confidence:</span>
+                          <span className="font-semibold text-cyan-300">
+                            {Math.round(selectedEvent.payload.risk_assessment.confidence * 100)}%
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500 block">Eligible Tx:</span>
+                          <span className="font-semibold text-slate-300">
+                            {selectedEvent.payload.risk_assessment.baseline.total_eligible_transfers}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {selectedEvent.payload.risk_assessment.signals &&
+                      selectedEvent.payload.risk_assessment.signals.length > 0 && (
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-sans block font-medium">
+                            Contributing Behavioral Signals:
+                          </span>
+                          {selectedEvent.payload.risk_assessment.signals.map((sig: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="bg-slate-900/90 p-2 rounded border border-slate-800 text-[11px] space-y-1"
+                            >
+                              <div className="flex justify-between items-center">
+                                <span className="font-semibold text-slate-200">{sig.name || sig.id}</span>
+                                <span className="text-[10px] text-amber-400 font-mono">
+                                  Contrib: {sig.score}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-sans">{sig.explanation}</p>
+                              {sig.evidence && (
+                                <div className="text-[9px] text-slate-500 font-mono bg-slate-950 p-1 rounded">
+                                  {JSON.stringify(sig.evidence)}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                   </div>
                 )}
 

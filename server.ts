@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
+import { evaluateAdaptiveTrust, computePersonalBaseline } from './src/adaptive_trust.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -433,89 +434,39 @@ function evaluateFirewall(rawPrompt: string, action = 'UNSPECIFIED', amountRupee
   };
 }
 
-function computeBehavioralRisk(userId: string, srcAcc: string, dstAcc: string, amountPaise: number) {
-  const completed = historicalTransactionsStore.filter((t) => t.user_id === userId && t.status === 'COMPLETED');
-  const count = completed.length;
-  const isColdStart = count < 3;
-  const profileStatus: ProfileStatus = isColdStart ? 'INSUFFICIENT_HISTORY' : 'ESTABLISHED';
-
-  const amounts = completed.map((t) => t.amount_paise).sort((a, b) => a - b);
-  const meanPaise = count > 0 ? amounts.reduce((a, b) => a + b, 0) / count : 0;
-  const variance = count > 1 ? amounts.reduce((acc, v) => acc + Math.pow(v - meanPaise, 2), 0) / (count - 1) : 0;
-  const stdPaise = Math.sqrt(variance);
-  const knownRecipients = new Set(completed.map((t) => t.destination_account_id));
-
-  const factorScores: { name: string; category: string; score: number }[] = [];
-
-  if (!isColdStart && meanPaise > 0) {
-    const ratio = amountPaise / meanPaise;
-    const zScore = stdPaise > 0 ? (amountPaise - meanPaise) / stdPaise : (ratio - 1) * 2;
-    if (zScore >= 2.5 || ratio >= 3.0) {
-      const score = Math.min(90, Math.round((40 + ratio * 10 + Math.max(0, zScore) * 8) * 10) / 10);
-      factorScores.push({ name: 'AMOUNT_SPIKE_ANOMALY', category: 'AMOUNT', score });
+function computeBehavioralRisk(
+  userId: string,
+  srcAcc: string,
+  dstAcc: string,
+  amountPaise: number,
+  options?: { offHours?: boolean; excludeTxId?: string }
+) {
+  const headHash =
+    auditChainStore.length > 0 ? auditChainStore[auditChainStore.length - 1].event_hash : '0';
+  const assessment = evaluateAdaptiveTrust(
+    userId,
+    srcAcc,
+    dstAcc,
+    amountPaise,
+    historicalTransactionsStore,
+    {
+      offHours: options?.offHours,
+      excludeTxId: options?.excludeTxId,
+      chainHeadHash: headHash,
     }
-  }
-
-  const count1h = completed.filter((t) => t.hours_ago <= 1).length;
-  if (count1h >= 3) {
-    const vScore = Math.min(85, 45 + count1h * 10);
-    factorScores.push({ name: 'RAPID_VELOCITY_BURST_1H', category: 'VELOCITY', score: vScore });
-  }
-
-  if (!knownRecipients.has(dstAcc)) {
-    if (!isColdStart) {
-      factorScores.push({ name: 'NOVEL_COUNTERPARTY', category: 'COUNTERPARTY', score: 35.0 });
-    } else {
-      factorScores.push({ name: 'INITIAL_COUNTERPARTY', category: 'COUNTERPARTY', score: 5.0 });
-    }
-  }
-
-  const failed24h = historicalTransactionsStore.filter((t) => t.user_id === userId && t.status !== 'COMPLETED' && t.hours_ago <= 24).length;
-  if (failed24h >= 3) {
-    const fScore = Math.min(75, 35 + failed24h * 10);
-    factorScores.push({ name: 'REPEATED_FAILED_ATTEMPTS', category: 'ATTEMPTS', score: fScore });
-  }
-
-  const categoryMax = new Map<string, { name: string; score: number }>();
-  for (const f of factorScores) {
-    const curr = categoryMax.get(f.category);
-    if (!curr || f.score > curr.score) {
-      categoryMax.set(f.category, { name: f.name, score: f.score });
-    }
-  }
-
-  const sortedCatScores = Array.from(categoryMax.values()).sort((a, b) => b.score - a.score);
-  let composite = 5.0;
-  if (sortedCatScores.length > 0) {
-    const primary = sortedCatScores[0].score;
-    const secondarySum = sortedCatScores.slice(1).reduce((acc, f) => acc + f.score, 0);
-    const sigCount = sortedCatScores.filter((f) => f.score >= 20).length;
-    const convergenceBonus = sigCount >= 2 ? (sigCount >= 3 ? 15.0 : 8.0) : 0.0;
-    composite = Math.min(98.0, Math.round((primary + secondarySum * 0.25 + convergenceBonus) * 10) / 10);
-  }
-
-  let level: RiskLevel = 'LOW';
-  let policyAction: BehavioralPolicyAction = 'ALLOW_UNDER_EXISTING_POLICY';
-  if (composite >= 75.0) {
-    level = 'CRITICAL';
-    policyAction = 'HOLD_FOR_TRUSTED_REVIEW';
-  } else if (composite >= 50.0) {
-    level = 'HIGH';
-    policyAction = 'REQUIRE_DUAL_APPROVAL';
-  } else if (composite >= 25.0) {
-    level = 'MEDIUM';
-    policyAction = 'STEP_UP_REVIEW';
-  }
-
-  const watermark = `wm_count${completed.length}_head${auditChainStore.length > 0 ? auditChainStore[auditChainStore.length - 1].event_hash.slice(0, 10) : '0'}`;
+  );
 
   return {
-    score: composite,
-    level,
-    profileStatus,
-    policyAction,
-    factors: sortedCatScores.map((s) => s.name),
-    historyWatermark: watermark,
+    score: assessment.score,
+    level: assessment.level,
+    profileStatus: assessment.profile_status,
+    policyAction: assessment.policy_action,
+    factors: assessment.factors,
+    signals: assessment.signals,
+    baseline: assessment.baseline,
+    confidence: assessment.confidence,
+    explanations: assessment.explanations,
+    historyWatermark: assessment.history_watermark,
   };
 }
 
@@ -641,7 +592,7 @@ app.post('/banking/transfers/prepare', (req: Request, res: Response) => {
       return res.status(400).json({ detail: `FIREWALL_BLOCK: ${fw.reasons.join(', ')}` });
     }
 
-    // 6. Behavioral Risk Assessment in minor units (paise)
+    // 6. Behavioral Risk Assessment in minor units (paise) via Adaptive Trust Engine
     const risk = computeBehavioralRisk(principal.user_id, source_account_id, destination_account_id, amountPaise);
     const assessment_id = 'asm_' + crypto.randomUUID().substring(0, 10);
     const riskRecord = {
@@ -656,8 +607,12 @@ app.post('/banking/transfers/prepare', (req: Request, res: Response) => {
       risk_score: risk.score,
       risk_level: risk.level,
       profile_status: risk.profileStatus,
+      confidence: risk.confidence,
       policy_action: risk.policyAction,
       factors_json: JSON.stringify(risk.factors),
+      signals: risk.signals,
+      baseline: risk.baseline,
+      explanations: risk.explanations,
       history_watermark: risk.historyWatermark,
       created_at_utc: new Date().toISOString(),
     };
@@ -671,21 +626,59 @@ app.post('/banking/transfers/prepare', (req: Request, res: Response) => {
 
     if (requiresDualApproval) {
       const requestId = 'req_' + crypto.randomUUID().substring(0, 10);
-      const reasonText = isHighValue
-        ? `High-value transfer (${formatINR(amountRupees)}) meets or exceeds ${formatINR(highValueThresholdRupees)} policy threshold, requiring dual authorization.`
-        : `Behavioral risk elevated (${risk.level}): ${risk.policyAction}`;
+      const reasonsList: string[] = [];
+      if (isHighValue) {
+        reasonsList.push(
+          `High-value transfer (${formatINR(amountRupees)}) meets or exceeds ${formatINR(highValueThresholdRupees)} policy threshold, requiring dual authorization.`
+        );
+      }
+      if (isHighRisk) {
+        reasonsList.push(`Behavioral risk elevated (${risk.level}): ${risk.policyAction}`);
+      }
+      // Add transaction-specific explanations from Adaptive Trust Engine
+      if (risk.explanations && risk.explanations.length > 0) {
+        for (const exp of risk.explanations) {
+          if (!reasonsList.includes(exp)) {
+            reasonsList.push(exp);
+          }
+        }
+      }
+
+      const dst = accountsStore.get(destination_account_id);
+      const ledgerMovement = {
+        source_account: {
+          account_id: src.account_id,
+          name: src.name,
+          balance_rupees: src.balance_paise / 100,
+          balance_paise: src.balance_paise,
+        },
+        destination_account: {
+          account_id: destination_account_id,
+          name: dst ? dst.name : (destination_account_id.startsWith('ACC-') ? 'External Counterparty' : destination_account_id),
+          exists_in_ledger: Boolean(dst),
+          balance_rupees: dst ? dst.balance_paise / 100 : null,
+          balance_paise: dst ? dst.balance_paise : null,
+        },
+        amount_rupees: amountRupees,
+        amount_paise: amountPaise,
+      };
 
       const reqRecord = {
         request_id: requestId,
         initiator_user_id: principal.user_id,
         source_account_id,
+        source_account_name: src.name,
         destination_account_id,
+        destination_account_name: dst ? dst.name : 'External Counterparty',
         amount_paise: amountPaise,
         amount_rupees: amountRupees,
         amount_cents: amountPaise,
         currency: 'INR',
-        reason: reasonText,
+        reason: reasonsList.join('; '),
+        reasons: reasonsList,
         status: 'PENDING',
+        risk_assessment: riskRecord,
+        ledger_movement: ledgerMovement,
         created_at_utc: new Date().toISOString(),
         expires_at_utc: new Date(Date.now() + CONFIG.DUAL_APPROVAL_EXPIRY_SECONDS * 1000).toISOString(),
       };
@@ -697,11 +690,31 @@ app.post('/banking/transfers/prepare', (req: Request, res: Response) => {
         ticket: null,
         dual_approval_request: reqRecord,
         risk_assessment: riskRecord,
-        reasons: [reasonText],
+        ledger_movement: ledgerMovement,
+        reasons: reasonsList,
       });
     }
 
     // 7. Single Authorized Ticket Generation (Only when all policy conditions are fully satisfied)
+    const dst = accountsStore.get(destination_account_id);
+    const ledgerMovement = {
+      source_account: {
+        account_id: src.account_id,
+        name: src.name,
+        balance_rupees: src.balance_paise / 100,
+        balance_paise: src.balance_paise,
+      },
+      destination_account: {
+        account_id: destination_account_id,
+        name: dst ? dst.name : (destination_account_id.startsWith('ACC-') ? 'External Counterparty' : destination_account_id),
+        exists_in_ledger: Boolean(dst),
+        balance_rupees: dst ? dst.balance_paise / 100 : null,
+        balance_paise: dst ? dst.balance_paise : null,
+      },
+      amount_rupees: amountRupees,
+      amount_paise: amountPaise,
+    };
+
     const ticketId = 'tkt_' + crypto.randomUUID().substring(0, 10);
     const canonicalTx: CanonicalTx = {
       transaction_nonce: crypto.randomUUID(),
@@ -723,13 +736,19 @@ app.post('/banking/transfers/prepare', (req: Request, res: Response) => {
       signature,
     };
 
-    appendAuditEvent('AUTHORIZATION_TICKET_ISSUED', principal.user_id, { ticket_id: ticketId, canonical_tx: canonicalTx });
+    appendAuditEvent('AUTHORIZATION_TICKET_ISSUED', principal.user_id, {
+      ticket_id: ticketId,
+      canonical_tx: canonicalTx,
+      source_account_name: src.name,
+      destination_account_name: dst ? dst.name : 'External Counterparty',
+    });
 
     res.json({
       status: 'AUTHORIZED',
       ticket,
       dual_approval_request: null,
       risk_assessment: riskRecord,
+      ledger_movement: ledgerMovement,
       reasons: ['Authorized under baseline policy'],
     });
   } catch (err: any) {
@@ -778,10 +797,13 @@ app.post('/banking/transfers/confirm', (req: Request, res: Response) => {
       return res.status(400).json({ detail: 'INSUFFICIENT_FUNDS: Balances altered since prepare phase.' });
     }
 
+    const srcBeforePaise = src.balance_paise;
+    const dst = accountsStore.get(destination_account_id);
+    const dstBeforePaise = dst ? dst.balance_paise : null;
+
     // Atomic debit & credit in minor units (paise)
     src.balance_paise -= amountPaise;
     src.balance_cents = src.balance_paise;
-    const dst = accountsStore.get(destination_account_id);
     if (dst) {
       dst.balance_paise += amountPaise;
       dst.balance_cents = dst.balance_paise;
@@ -793,11 +815,18 @@ app.post('/banking/transfers/confirm', (req: Request, res: Response) => {
     const auditRecord = appendAuditEvent('TRANSFER_EXECUTED', principal.user_id, {
       tx_id: txId,
       source_account_id,
+      source_account_name: src.name,
       destination_account_id,
+      destination_account_name: dst ? dst.name : 'External Counterparty',
       amount_paise: amountPaise,
       amount_rupees: amountPaise / 100,
       currency: 'INR',
       ticket_id: ticket.ticket_id,
+      source_balance_before_rupees: srcBeforePaise / 100,
+      source_balance_after_rupees: src.balance_paise / 100,
+      destination_balance_before_rupees: dstBeforePaise !== null ? dstBeforePaise / 100 : null,
+      destination_balance_after_rupees: dst ? dst.balance_paise / 100 : null,
+      destination_exists_in_ledger: Boolean(dst),
     });
 
     const historicalRecord: HistoricalTransaction = {
@@ -821,12 +850,19 @@ app.post('/banking/transfers/confirm', (req: Request, res: Response) => {
       receipt: {
         tx_id: txId,
         source_account_id,
+        source_account_name: src.name,
         destination_account_id,
+        destination_account_name: dst ? dst.name : 'External Counterparty',
         amount_rupees: amountPaise / 100,
         amount_paise: amountPaise,
         currency: 'INR',
         amount_dollars: amountPaise / 100,
         amount_cents: amountPaise,
+        source_balance_before_rupees: srcBeforePaise / 100,
+        source_balance_after_rupees: src.balance_paise / 100,
+        destination_balance_before_rupees: dstBeforePaise !== null ? dstBeforePaise / 100 : null,
+        destination_balance_after_rupees: dst ? dst.balance_paise / 100 : null,
+        destination_exists_in_ledger: Boolean(dst),
         status: 'COMPLETED',
         audit_event_hash: auditRecord.event_hash,
         executed_at: new Date().toISOString(),
@@ -889,6 +925,7 @@ app.post('/banking/transfers/approve', (req: Request, res: Response) => {
       signature,
     };
 
+    approvalReq.ticket = ticket;
     appendAuditEvent('DUAL_APPROVAL_APPROVED', principal.user_id, { request_id, ticket_id: ticketId, currency: 'INR' });
 
     res.json({
@@ -906,33 +943,34 @@ app.post('/banking/transfers/approve', (req: Request, res: Response) => {
 app.get('/banking/risk/profile', (req: Request, res: Response) => {
   try {
     const principal = resolvePrincipal(req);
+    const baseline = computePersonalBaseline(principal.user_id, '', historicalTransactionsStore);
     const userTxs = historicalTransactionsStore.filter((t) => t.user_id === principal.user_id && t.status === 'COMPLETED');
     const amountsRupees = userTxs.map((t) => t.amount_paise / 100);
-    const mean = amountsRupees.length > 0 ? amountsRupees.reduce((a, b) => a + b, 0) / amountsRupees.length : 0;
-    const std = amountsRupees.length > 1 ? Math.sqrt(amountsRupees.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (amountsRupees.length - 1)) : 0;
-    const knownCounterparties = Array.from(new Set(userTxs.map((t) => t.destination_account_id)));
 
     res.json({
       user_id: principal.user_id,
       username: principal.username,
       role: principal.role,
-      profile_status: userTxs.length >= 3 ? 'ESTABLISHED' : 'INSUFFICIENT_HISTORY',
-      transaction_count: userTxs.length,
+      profile_status: baseline.profile_status,
+      baseline_maturity: baseline.baseline_maturity,
+      confidence: baseline.confidence,
+      transaction_count: baseline.total_eligible_transfers,
       currency: 'INR',
-      count_1h: userTxs.filter((t) => t.hours_ago <= 1).length,
-      count_24h: userTxs.filter((t) => t.hours_ago <= 24).length,
-      failed_24h: historicalTransactionsStore.filter((t) => t.user_id === principal.user_id && t.status !== 'COMPLETED' && t.hours_ago <= 24).length,
-      mean_rupees: Math.round(mean * 100) / 100,
-      median_rupees: Math.round(mean * 100) / 100,
-      std_rupees: Math.round(std * 100) / 100,
+      count_1h: baseline.velocity_1h,
+      count_24h: baseline.velocity_24h,
+      failed_24h: baseline.failed_attempts_24h,
+      mean_rupees: baseline.mean_rupees,
+      median_rupees: baseline.median_rupees,
+      std_rupees: baseline.std_rupees,
+      mad_rupees: baseline.mad_rupees,
       max_rupees: amountsRupees.length > 0 ? Math.max(...amountsRupees) : 0,
       // Backward compatibility
-      mean_dollars: Math.round(mean * 100) / 100,
-      median_dollars: Math.round(mean * 100) / 100,
-      std_dollars: Math.round(std * 100) / 100,
+      mean_dollars: baseline.mean_rupees,
+      median_dollars: baseline.median_rupees,
+      std_dollars: baseline.std_rupees,
       max_dollars: amountsRupees.length > 0 ? Math.max(...amountsRupees) : 0,
-      known_counterparties: knownCounterparties,
-      history_watermark: `wm_count${userTxs.length}`,
+      known_counterparties: baseline.known_counterparties,
+      history_watermark: `wm_count${baseline.total_eligible_transfers}`,
     });
   } catch (err: any) {
     res.status(err.status || 500).json({ detail: err.message || 'Internal error' });
@@ -949,11 +987,13 @@ app.get('/banking/risk/assessments', (req: Request, res: Response) => {
         ...r,
         username: principal.username,
         transaction_fingerprint: '',
-        confidence: 0.85,
-        risk_factors: JSON.parse(r.factors_json || '[]'),
-        explanations: JSON.parse(r.factors_json || '[]'),
-        recommended_action_reason: 'Persisted risk assessment',
-        model_version: '0.3.0',
+        confidence: r.confidence ?? 0.85,
+        signals: r.signals ?? [],
+        baseline: r.baseline ?? null,
+        risk_factors: r.signals ?? JSON.parse(r.factors_json || '[]'),
+        explanations: r.explanations ?? JSON.parse(r.factors_json || '[]'),
+        recommended_action_reason: 'Adaptive Trust Engine transaction assessment',
+        model_version: 'adaptive-trust-v1.0.0',
         assessed_at: r.created_at_utc,
         final_outcome: 'COMPLETED',
         firewall_verdict: 'APPROVE',
@@ -979,11 +1019,13 @@ app.get('/banking/risk/assessments/:assessment_id', (req: Request, res: Response
       ...assessment,
       username: principal.username,
       transaction_fingerprint: '',
-      confidence: 0.85,
-      risk_factors: JSON.parse(assessment.factors_json || '[]'),
-      explanations: JSON.parse(assessment.factors_json || '[]'),
-      recommended_action_reason: 'Persisted risk assessment',
-      model_version: '0.3.0',
+      confidence: assessment.confidence ?? 0.85,
+      signals: assessment.signals ?? [],
+      baseline: assessment.baseline ?? null,
+      risk_factors: assessment.signals ?? JSON.parse(assessment.factors_json || '[]'),
+      explanations: assessment.explanations ?? JSON.parse(assessment.factors_json || '[]'),
+      recommended_action_reason: 'Adaptive Trust Engine transaction assessment',
+      model_version: 'adaptive-trust-v1.0.0',
       assessed_at: assessment.created_at_utc,
       final_outcome: 'COMPLETED',
       firewall_verdict: 'APPROVE',
@@ -1106,6 +1148,51 @@ app.get('/banking/transfers/pending', (req: Request, res: Response) => {
     res.json(list);
   } catch (err: any) {
     res.status(500).json({ detail: err.message || 'Failed to fetch pending approvals' });
+  }
+});
+
+// 12b. Specific Transfer Request Status Lookup
+app.get('/banking/transfers/requests/:request_id', (req: Request, res: Response) => {
+  try {
+    const principal = resolvePrincipal(req);
+    const reqRecord = dualApprovalRequestsStore.get(req.params.request_id);
+    if (!reqRecord) {
+      return res.status(404).json({ detail: `REQUEST_NOT_FOUND: Transfer request '${req.params.request_id}' not found.` });
+    }
+    // Allow initiator or risk approver to read status
+    if (reqRecord.initiator_user_id !== principal.user_id && principal.role !== 'APPROVER') {
+      return res.status(403).json({ detail: 'ACCESS_DENIED: You are not authorized to view this request.' });
+    }
+    res.json(reqRecord);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ detail: err.message || 'Failed to fetch transfer request' });
+  }
+});
+
+// 12c. Counterparty Account Public Lookup
+app.get('/banking/accounts/lookup/:account_id', (req: Request, res: Response) => {
+  try {
+    const accountId = req.params.account_id;
+    const acc = accountsStore.get(accountId);
+    if (!acc) {
+      return res.json({
+        account_id: accountId,
+        name: accountId.startsWith('ACC-') ? 'External Counterparty' : accountId,
+        exists_in_ledger: false,
+        currency: 'INR',
+      });
+    }
+    const owner = Object.values(DEMO_DIRECTORY).find((u) => u.user_id === acc.owner_user_id);
+    res.json({
+      account_id: acc.account_id,
+      name: acc.name,
+      owner: owner?.username || 'Verified Account Holder',
+      exists_in_ledger: true,
+      currency: acc.currency,
+      balance_rupees: acc.balance_paise / 100,
+    });
+  } catch (err: any) {
+    res.status(500).json({ detail: err.message || 'Failed to lookup account' });
   }
 });
 

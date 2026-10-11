@@ -25,11 +25,14 @@ import {
   UserCheck,
   Lock,
 } from 'lucide-react';
+import MoneyTransferFlowVisualizer from './MoneyTransferFlowVisualizer';
 import {
   fetchAccountsApi,
   sendChatMessageApi,
   prepareTransferApi,
   confirmTransferApi,
+  fetchTransferRequestStatusApi,
+  lookupAccountApi,
   ApiAccountInfo,
   ChatMessageResponse,
   checkBackendHealth,
@@ -62,6 +65,15 @@ interface Message {
   reasons?: string[];
   requestId?: string;
   engine?: string;
+  riskAssessment?: any;
+  ledgerMovement?: any;
+  ticket?: any;
+  approvedByRiskOfficer?: boolean;
+  counterpartyInfo?: {
+    name: string;
+    exists_in_ledger: boolean;
+    balance_rupees?: number;
+  };
 }
 
 const SUGGESTED_PROMPTS = [
@@ -121,6 +133,47 @@ export default function BankismAI({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
 
+  // Periodic sync for any pending dual-approval requests
+  useEffect(() => {
+    const pendingMsg = messages.find((m) => m.stage === 'PENDING_APPROVAL' && m.requestId && !m.approvedByRiskOfficer);
+    if (!pendingMsg || !pendingMsg.requestId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const statusRes = await fetchTransferRequestStatusApi(currentUser, pendingMsg.requestId!);
+        if (statusRes.status === 'APPROVED' && statusRes.ticket) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === pendingMsg.id
+                ? {
+                    ...m,
+                    approvedByRiskOfficer: true,
+                    ticket: statusRes.ticket,
+                  }
+                : m
+            )
+          );
+        } else if (statusRes.status === 'REJECTED') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === pendingMsg.id
+                ? {
+                    ...m,
+                    stage: 'BLOCKED',
+                    reasons: ['Dual approval rejected by Risk Officer.'],
+                  }
+                : m
+            )
+          );
+        }
+      } catch {
+        // silent catch
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [messages, currentUser]);
+
   const activeAccount = accounts.find((a) => a.account_id === selectedAccountId) || accounts[0];
 
   const handleSendMessage = async (customText?: string) => {
@@ -142,6 +195,11 @@ export default function BankismAI({
     try {
       const res: ChatMessageResponse = await sendChatMessageApi(currentUser, textToSend, selectedAccountId);
 
+      let counterpartyInfo: any = null;
+      if (res.proposal?.destination_account_id) {
+        counterpartyInfo = await lookupAccountApi(res.proposal.destination_account_id).catch(() => null);
+      }
+
       const assistantMsg: Message = {
         id: 'ast_' + (Date.now() + 1),
         sender: 'assistant',
@@ -149,6 +207,7 @@ export default function BankismAI({
         text: res.reply,
         intent: res.intent,
         proposal: res.proposal,
+        counterpartyInfo: counterpartyInfo || undefined,
         stage: res.proposal ? 'PROPOSED' : undefined,
         engine: res.engine,
       };
@@ -170,6 +229,10 @@ export default function BankismAI({
   // Explicit Customer Confirmation Flow
   const handleConfirmProposal = async (msgId: string, proposal: NonNullable<Message['proposal']>) => {
     setActionInProgressId(msgId);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msgId ? { ...m, stage: 'CONFIRMING' } : m))
+    );
+
     try {
       // 1. Prepare through the real backend firewall and authorization gateway
       const prepRes = await prepareTransferApi(
@@ -191,6 +254,8 @@ export default function BankismAI({
                   stage: 'PENDING_APPROVAL',
                   requestId: prepRes.dual_approval_request?.request_id,
                   reasons: prepRes.reasons,
+                  riskAssessment: prepRes.risk_assessment,
+                  ledgerMovement: prepRes.ledger_movement,
                 }
               : m
           )
@@ -208,6 +273,8 @@ export default function BankismAI({
                   ...m,
                   stage: 'COMPLETED',
                   receipt: confirmRes.receipt,
+                  riskAssessment: prepRes.risk_assessment,
+                  ledgerMovement: prepRes.ledger_movement,
                 }
               : m
           )
@@ -228,6 +295,77 @@ export default function BankismAI({
             : m
         )
       );
+    } finally {
+      setActionInProgressId(null);
+    }
+  };
+
+  // Execute Dual-Approved Transfer once Risk Officer signs off
+  const handleExecuteDualApproved = async (msgId: string, ticket: any) => {
+    setActionInProgressId(msgId);
+    try {
+      const confirmRes = await confirmTransferApi(currentUser, ticket);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                stage: 'COMPLETED',
+                receipt: confirmRes.receipt,
+                approvedByRiskOfficer: true,
+              }
+            : m
+        )
+      );
+      await loadAccounts();
+    } catch (err: any) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                reasons: [...(m.reasons || []), `Execution error: ${err.message}`],
+              }
+            : m
+        )
+      );
+    } finally {
+      setActionInProgressId(null);
+    }
+  };
+
+  // Check status of a pending dual-approval transfer
+  const handleCheckApprovalStatus = async (msgId: string, requestId: string) => {
+    setActionInProgressId(msgId);
+    try {
+      const statusRes = await fetchTransferRequestStatusApi(currentUser, requestId);
+      if (statusRes.status === 'APPROVED' && statusRes.ticket) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  approvedByRiskOfficer: true,
+                  ticket: statusRes.ticket,
+                }
+              : m
+          )
+        );
+      } else if (statusRes.status === 'REJECTED') {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  stage: 'BLOCKED',
+                  reasons: ['Dual approval rejected by Risk Officer.'],
+                }
+              : m
+          )
+        );
+      }
+    } catch (err: any) {
+      console.warn('Status check failed:', err);
     } finally {
       setActionInProgressId(null);
     }
@@ -463,55 +601,69 @@ export default function BankismAI({
                 >
                   {msg.text}
 
-                  {/* Proposal Review Card (Shown when assistant proposes a transfer) */}
-                  {msg.proposal && (
-                    <div className="mt-3 pt-3 border-t border-slate-200/80 text-slate-900">
-                      {msg.stage === 'PROPOSED' && (
-                        <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 text-xs flex flex-col gap-2.5">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-slate-900 flex items-center gap-1.5">
-                              <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                              Transaction Proposal Review
-                            </span>
-                            <span className="font-mono text-slate-500 text-[10px]">PREPARE STAGE</span>
-                          </div>
+                  {/* Proposal Review Card with Real-Time Money Movement Visualizer */}
+                  {msg.proposal && (() => {
+                    const prop = msg.proposal;
+                    const destAccountId = prop.destination_account_id;
+                    const srcAccountId = prop.source_account_id;
+                    const destAccountName =
+                      msg.receipt?.destination_account_name ||
+                      msg.ledgerMovement?.destination_account?.name ||
+                      msg.counterpartyInfo?.name ||
+                      accounts.find((a) => a.account_id === destAccountId)?.name ||
+                      (destAccountId.startsWith('ACC-') ? 'Counterparty Account' : destAccountId);
+                    const srcAccountName =
+                      activeAccount?.account_id === srcAccountId
+                        ? activeAccount.name
+                        : accounts.find((a) => a.account_id === srcAccountId)?.name || 'Alice Everyday Checking';
 
-                          <div className="grid grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded-lg border border-slate-200/70">
-                            <div>
-                              <span className="text-slate-500 block">From Account:</span>
-                              <span className="font-mono font-medium text-slate-800">
-                                {msg.proposal.source_account_id}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-slate-500 block">To Recipient:</span>
-                              <span className="font-mono font-medium text-slate-800">
-                                {msg.proposal.destination_account_id}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-slate-500 block">Amount:</span>
-                              <span className="font-bold text-slate-900 text-xs">
-                                {formatINR(msg.proposal.amount)} ({msg.proposal.currency || 'INR'})
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-slate-500 block">Memo:</span>
-                              <span className="text-slate-700 truncate block">
-                                {msg.proposal.memo || 'None'}
-                              </span>
-                            </div>
-                          </div>
+                    return (
+                      <div className="mt-3 pt-3 border-t border-slate-200/80 text-slate-900 space-y-3">
+                        {/* Real-Time Money Movement Flow Visualizer */}
+                        <MoneyTransferFlowVisualizer
+                          stage={msg.stage || 'PROPOSED'}
+                          amount={prop.amount}
+                          currency={prop.currency || 'INR'}
+                          sourceAccount={{
+                            accountId: srcAccountId,
+                            name: srcAccountName,
+                            balanceBefore:
+                              msg.receipt?.source_balance_before_rupees ??
+                              (msg.ledgerMovement?.source_account?.balance_rupees ?? activeAccount?.balance_rupees),
+                            balanceAfter: msg.receipt?.source_balance_after_rupees,
+                          }}
+                          destinationAccount={{
+                            accountId: destAccountId,
+                            name: destAccountName,
+                            balanceBefore:
+                              msg.receipt?.destination_balance_before_rupees ??
+                              (msg.ledgerMovement?.destination_account?.balance_rupees ??
+                                accounts.find((a) => a.account_id === destAccountId)?.balance_rupees ??
+                                null),
+                            balanceAfter: msg.receipt?.destination_balance_after_rupees ?? null,
+                            existsInLedger:
+                              msg.receipt?.destination_exists_in_ledger ??
+                              (msg.ledgerMovement?.destination_account?.exists_in_ledger ??
+                                msg.counterpartyInfo?.exists_in_ledger),
+                          }}
+                          transactionId={msg.receipt?.tx_id || msg.requestId}
+                          auditHash={msg.receipt?.audit_event_hash}
+                          riskAssessment={msg.riskAssessment}
+                          reasons={msg.reasons}
+                          theme="light"
+                        />
 
+                        {/* Explicit Action Controls based on Backend Lifecycle */}
+                        {msg.stage === 'PROPOSED' && (
                           <div className="flex items-center gap-2 pt-1">
                             <button
-                              onClick={() => handleConfirmProposal(msg.id, msg.proposal!)}
+                              onClick={() => handleConfirmProposal(msg.id, prop)}
                               disabled={actionInProgressId === msg.id}
                               className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs transition-colors shadow-xs disabled:opacity-50"
                             >
                               {actionInProgressId === msg.id ? (
                                 <>
-                                  <RefreshCw className="w-3 h-3 animate-spin" />
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                   <span>Inspecting & Authorizing...</span>
                                 </>
                               ) : (
@@ -529,93 +681,109 @@ export default function BankismAI({
                               Cancel
                             </button>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {/* Pending Dual Approval State */}
-                      {msg.stage === 'PENDING_APPROVAL' && (
-                        <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-300 text-xs flex flex-col gap-2">
-                          <div className="flex items-center gap-2 text-amber-800 font-semibold">
-                            <Clock className="w-4 h-4 text-amber-600" />
-                            <span>Dual Approval Required (High Value / High Risk)</span>
-                          </div>
-                          <p className="text-[11px] text-amber-700 leading-normal">
-                            This transaction exceeds policy thresholds (₹50,000.00 high-value threshold or behavioral anomaly) and requires secondary sign-off from an authorized Risk Officer (Charlie) before execution.
-                          </p>
-                          <div className="bg-white/80 p-2 rounded border border-amber-200 text-[11px] flex justify-between">
-                            <span className="text-slate-500">Request ID:</span>
-                            <span className="font-mono font-semibold text-slate-800">{msg.requestId}</span>
-                          </div>
-                          <button
-                            onClick={onNavigateToSentinel}
-                            className="mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium text-xs transition-colors"
-                          >
-                            <span>View & Sign-Off in Sentinel SOC</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Completed State */}
-                      {msg.stage === 'COMPLETED' && (
-                        <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-300 text-xs flex flex-col gap-2">
-                          <div className="flex items-center gap-2 text-emerald-800 font-semibold">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>Transfer Executed & Confirmed</span>
-                          </div>
-                          <p className="text-[11px] text-emerald-700">
-                            The transaction was authorized with an HMAC signature and successfully debited from the ledger.
-                          </p>
-                          {msg.receipt && (
-                            <div className="bg-white/90 p-2.5 rounded-lg border border-emerald-200 text-[11px] font-mono space-y-1 text-slate-700">
-                              <div className="flex justify-between">
-                                <span className="text-slate-500 font-sans">Tx ID:</span>
-                                <span className="font-bold text-slate-900">{msg.receipt.tx_id}</span>
+                        {/* Pending Dual Approval State */}
+                        {msg.stage === 'PENDING_APPROVAL' && (
+                          <div className="bg-amber-50 rounded-xl p-3 border border-amber-300 text-xs flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-amber-800 font-semibold">
+                                <Clock className="w-4 h-4 text-amber-600" />
+                                <span>Dual Approval Required (High Value / High Risk)</span>
                               </div>
-                              <div className="flex justify-between">
-                                <span className="text-slate-500 font-sans">Amount:</span>
-                                <span>{formatINR(msg.receipt.amount_rupees ?? msg.receipt.amount_dollars)} INR</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-slate-500 font-sans">Audit Hash:</span>
-                                <span className="truncate max-w-[180px] text-[10px] text-slate-600">
-                                  {msg.receipt.audit_event_hash}
-                                </span>
-                              </div>
+                              <span className="font-mono text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-300">
+                                {msg.requestId}
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      )}
 
-                      {/* Blocked State */}
-                      {msg.stage === 'BLOCKED' && (
-                        <div className="bg-rose-50 rounded-xl p-3.5 border border-rose-300 text-xs flex flex-col gap-2">
-                          <div className="flex items-center gap-2 text-rose-800 font-semibold">
-                            <ShieldAlert className="w-4 h-4 text-rose-600" />
-                            <span>Execution Blocked Fail-Closed</span>
+                            <p className="text-[11px] text-amber-700 leading-normal">
+                              This transaction requires secondary sign-off from an authorized Risk Officer (Charlie) before execution.
+                            </p>
+
+                            {msg.approvedByRiskOfficer && msg.ticket ? (
+                              <div className="space-y-2 pt-1">
+                                <div className="p-2 bg-emerald-50 border border-emerald-300 rounded text-emerald-800 text-xs flex items-center gap-1.5 font-medium">
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                  <span>Dual Approval Granted by Risk Officer (Charlie)! HMAC Ticket Verified.</span>
+                                </div>
+                                <button
+                                  onClick={() => handleExecuteDualApproved(msg.id, msg.ticket)}
+                                  disabled={actionInProgressId === msg.id}
+                                  className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold text-xs transition-colors shadow-xs disabled:opacity-50"
+                                >
+                                  {actionInProgressId === msg.id ? (
+                                    <>
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Committing to Ledger...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>Execute Approved Transfer Now</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
+                                <button
+                                  onClick={() => handleCheckApprovalStatus(msg.id, msg.requestId!)}
+                                  disabled={actionInProgressId === msg.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-lg font-medium text-xs transition-colors shadow-xs disabled:opacity-50"
+                                >
+                                  <RefreshCw className={`w-3 h-3 ${actionInProgressId === msg.id ? 'animate-spin' : ''}`} />
+                                  <span>Check Approval Status</span>
+                                </button>
+                                <button
+                                  onClick={onNavigateToSentinel}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium text-xs transition-colors shadow-xs"
+                                >
+                                  <span>View & Sign-Off in Sentinel SOC</span>
+                                  <ArrowRight className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <p className="text-[11px] text-rose-700">
-                            The Bankism Deterministic Firewall intercepted this request. No funds were debited (₹0.00 transferred).
-                          </p>
-                          {msg.reasons && msg.reasons.length > 0 && (
-                            <div className="bg-white/80 p-2 rounded border border-rose-200 text-[11px] text-rose-900 font-mono">
-                              {msg.reasons.join('\n')}
+                        )}
+
+                        {/* Completed State Confirmation */}
+                        {msg.stage === 'COMPLETED' && (
+                          <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-300 text-xs flex items-center justify-between text-emerald-800">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                              <span className="font-semibold">Ledger Committed & Audit Verified</span>
                             </div>
-                          )}
-                          <div className="flex items-center justify-between pt-1">
+                            <span className="font-mono text-[10px] text-emerald-700">
+                              Tx: {msg.receipt?.tx_id}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Blocked State Notice */}
+                        {msg.stage === 'BLOCKED' && (
+                          <div className="bg-rose-50 rounded-xl p-3 border border-rose-300 text-xs flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between text-rose-800 font-semibold">
+                              <span className="flex items-center gap-1.5">
+                                <ShieldAlert className="w-4 h-4 text-rose-600" />
+                                Execution Blocked Fail-Closed
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500">₹0.00 Transferred</span>
+                            </div>
+                            <p className="text-[11px] text-rose-700">
+                              The Bankism Deterministic Firewall intercepted this request. Balances remain unchanged.
+                            </p>
                             <button
                               onClick={onNavigateToSentinel}
-                              className="text-rose-700 hover:text-rose-900 font-semibold text-[11px] flex items-center gap-1"
+                              className="self-start text-rose-700 hover:text-rose-900 font-semibold text-[11px] flex items-center gap-1 pt-1"
                             >
-                              <span>Inspect Threat in Sentinel</span>
+                              <span>Inspect Threat in Sentinel SOC</span>
                               <ExternalLink className="w-3 h-3" />
                             </button>
-                            <span className="text-slate-500 text-[10px]">Invariant 1 Preserved</span>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
