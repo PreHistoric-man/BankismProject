@@ -1,3 +1,0 @@
-"""
-Deterministic Policies Subsystem Package
-"""

@@ -3,7 +3,7 @@
  * @description Typed API client for Bankism FastAPI backend with graceful fallback.
  */
 
-export const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL ?? '';
 
 export interface ApiInspectResponse {
   inspection_id: string;
@@ -33,13 +33,32 @@ export interface ApiInspectResponse {
   timestamp: string;
 }
 
+export function formatINR(amountRupees: number): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  }).format(amountRupees);
+}
+
+export function formatPaiseToINR(amountPaise: number): string {
+  return formatINR(amountPaise / 100);
+}
+
 export interface ApiAccountInfo {
   account_id: string;
   name: string;
   owner: string;
-  balance_dollars: number;
-  balance_cents: number;
-  daily_limit_dollars: number;
+  balance_rupees: number;
+  balance_paise: number;
+  daily_limit_rupees: number;
+  daily_limit_paise: number;
+  currency: 'INR';
+  // Backward-compatibility aliases
+  balance_dollars?: number;
+  balance_cents?: number;
+  daily_limit_dollars?: number;
 }
 
 export interface ApiPrepareResponse {
@@ -51,12 +70,9 @@ export interface ApiPrepareResponse {
 }
 
 export async function checkBackendHealth(): Promise<boolean> {
-  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && (!API_BASE_URL || API_BASE_URL.startsWith('http://localhost'))) {
-    // Avoid blocked mixed-content calls in HTTPS cloud preview environments
-    return false;
-  }
   try {
-    const res = await fetch(`${API_BASE_URL}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
+    const url = API_BASE_URL ? `${API_BASE_URL}/health` : '/health';
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(2000) });
     if (!res.ok) return false;
     const data = await res.json().catch(() => null);
     return data && (data.status === 'healthy' || data.status === 'ok');
@@ -182,6 +198,84 @@ export async function fetchRiskAssessmentsApi(username: string): Promise<any[]> 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Failed to fetch risk assessments' }));
     throw new Error(err.detail || 'Failed to fetch risk assessments');
+  }
+  return res.json();
+}
+
+export interface SentinelAuditSummary {
+  total_events: number;
+  total_inspections: number;
+  blocked_count: number;
+  review_count: number;
+  completed_count: number;
+  head_hash: string;
+}
+
+export interface SentinelAuditResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  events: Array<{
+    event_id: string;
+    prev_hash: string;
+    event_type: string;
+    user_id: string;
+    payload: any;
+    timestamp: string;
+    event_hash: string;
+  }>;
+  summary: SentinelAuditSummary;
+}
+
+export async function fetchAuditEventsApi(limit = 50, offset = 0, filter = 'all'): Promise<SentinelAuditResponse> {
+  const params = new URLSearchParams({ limit: limit.toString(), offset: offset.toString(), filter });
+  const res = await fetch(`${API_BASE_URL}/banking/audit/events?${params.toString()}`, {
+    method: 'GET',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to fetch audit events' }));
+    throw new Error(err.detail || 'Failed to fetch audit events');
+  }
+  return res.json();
+}
+
+export async function fetchPendingApprovalsApi(): Promise<any[]> {
+  const res = await fetch(`${API_BASE_URL}/banking/transfers/pending`, {
+    method: 'GET',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Failed to fetch pending approvals' }));
+    throw new Error(err.detail || 'Failed to fetch pending approvals');
+  }
+  return res.json();
+}
+
+export interface ChatMessageResponse {
+  intent: string;
+  reply: string;
+  proposal: {
+    source_account_id: string;
+    destination_account_id: string;
+    amount: number;
+    currency: string;
+    memo: string;
+    raw_prompt?: string;
+  } | null;
+  engine: string;
+}
+
+export async function sendChatMessageApi(username: string, message: string, account_id?: string): Promise<ChatMessageResponse> {
+  const res = await fetch(`${API_BASE_URL}/banking/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Bankism-Mock-User': username,
+    },
+    body: JSON.stringify({ message, account_id }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Chat assistant error' }));
+    throw new Error(err.detail || 'Chat assistant error');
   }
   return res.json();
 }

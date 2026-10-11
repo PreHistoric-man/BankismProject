@@ -1,3 +1,0 @@
-"""
-Bankism Backend Tests Package
-"""
